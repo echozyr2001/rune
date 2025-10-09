@@ -66,6 +66,7 @@ impl PluginContext {
 }
 
 /// Plugin registry for managing loaded plugins
+#[allow(dead_code)]
 pub struct PluginRegistry {
     plugins: HashMap<String, Box<dyn Plugin>>,
     plugin_info: HashMap<String, PluginInfo>,
