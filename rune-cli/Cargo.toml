@@ -1,0 +1,19 @@
+[package]
+name = "rune-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI interface for the Rune markdown live editor"
+
+[[bin]]
+name = "rune"
+path = "src/main.rs"
+
+[dependencies]
+rune-core = { path = "../rune-core" }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
