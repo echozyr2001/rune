@@ -73,6 +73,12 @@ pub trait EventHandler<T: Event>: Send + Sync {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SubscriptionId(pub Uuid);
 
+impl Default for SubscriptionId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubscriptionId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())

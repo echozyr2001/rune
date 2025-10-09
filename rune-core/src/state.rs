@@ -111,25 +111,13 @@ impl Default for StateManager {
 }
 
 /// Main application state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ApplicationState {
     pub current_file: Option<PathBuf>,
     pub active_clients: HashMap<Uuid, ClientInfo>,
     pub loaded_plugins: HashMap<String, PluginInfo>,
     pub render_cache: HashMap<String, CachedRender>,
     pub system_health: SystemHealth,
-}
-
-impl Default for ApplicationState {
-    fn default() -> Self {
-        Self {
-            current_file: None,
-            active_clients: HashMap::new(),
-            loaded_plugins: HashMap::new(),
-            render_cache: HashMap::new(),
-            system_health: SystemHealth::default(),
-        }
-    }
 }
 
 /// Information about connected clients

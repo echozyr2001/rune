@@ -226,7 +226,7 @@ impl DependencyGraph {
     pub fn add_dependency(&mut self, plugin: String, dependency: String) {
         self.dependencies
             .entry(plugin)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(dependency);
     }
 
