@@ -2,6 +2,10 @@
 members = [
     "rune-core",
     "rune-cli",
+    "plugins/file-watcher",
+    "plugins/renderer",
+    "plugins/server",
+    "plugins/theme",
 ]
 resolver = "2"
 

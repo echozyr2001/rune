@@ -1,0 +1,17 @@
+[package]
+name = "rune-renderer"
+version = "0.1.0"
+edition = "2021"
+description = "Content rendering plugin for Rune"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rune-core = { path = "../../rune-core" }
+tokio = { workspace = true }
+markdown = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
