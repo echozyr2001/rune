@@ -55,7 +55,9 @@ impl StateManager {
     /// Update plugin information
     pub async fn update_plugin(&self, plugin_info: PluginInfo) {
         let mut state = self.state.write().await;
-        state.loaded_plugins.insert(plugin_info.name.clone(), plugin_info);
+        state
+            .loaded_plugins
+            .insert(plugin_info.name.clone(), plugin_info);
     }
 
     /// Remove plugin information
@@ -67,16 +69,19 @@ impl StateManager {
     /// Add rendered content to cache
     pub async fn cache_render(&self, content_hash: String, cached_render: CachedRender) {
         let mut state = self.state.write().await;
-        
+
         // Simple LRU eviction - remove oldest if cache is full
         if state.render_cache.len() >= 100 {
-            if let Some((oldest_key, _)) = state.render_cache.iter()
-                .min_by_key(|(_, render)| render.timestamp) {
+            if let Some((oldest_key, _)) = state
+                .render_cache
+                .iter()
+                .min_by_key(|(_, render)| render.timestamp)
+            {
                 let oldest_key = oldest_key.clone();
                 state.render_cache.remove(&oldest_key);
             }
         }
-        
+
         state.render_cache.insert(content_hash, cached_render);
     }
 
@@ -165,11 +170,7 @@ pub struct CachedRender {
 
 impl CachedRender {
     /// Create new cached render
-    pub fn new(
-        content_hash: String,
-        rendered_html: String,
-        metadata: RenderMetadata,
-    ) -> Self {
+    pub fn new(content_hash: String, rendered_html: String, metadata: RenderMetadata) -> Self {
         Self {
             content_hash,
             rendered_html,

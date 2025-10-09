@@ -16,10 +16,10 @@ use crate::error::{Result, RuneError};
 pub trait Event: Send + Sync + Clone + std::fmt::Debug + 'static {
     /// Get the event type identifier
     fn event_type(&self) -> &str;
-    
+
     /// Get the event timestamp
     fn timestamp(&self) -> SystemTime;
-    
+
     /// Get event metadata
     fn metadata(&self) -> HashMap<String, String> {
         HashMap::new()
@@ -31,13 +31,16 @@ pub trait Event: Send + Sync + Clone + std::fmt::Debug + 'static {
 pub trait EventBus: Send + Sync {
     /// Publish a system event to all subscribers
     async fn publish_system_event(&self, event: SystemEvent) -> Result<()>;
-    
+
     /// Subscribe to system events
-    async fn subscribe_system_events(&self, handler: Arc<dyn SystemEventHandler>) -> Result<SubscriptionId>;
-    
+    async fn subscribe_system_events(
+        &self,
+        handler: Arc<dyn SystemEventHandler>,
+    ) -> Result<SubscriptionId>;
+
     /// Unsubscribe from events
     async fn unsubscribe(&self, id: SubscriptionId) -> Result<()>;
-    
+
     /// Get the number of active subscriptions
     async fn subscription_count(&self) -> usize;
 }
@@ -47,7 +50,7 @@ pub trait EventBus: Send + Sync {
 pub trait SystemEventHandler: Send + Sync {
     /// Handle a system event
     async fn handle_system_event(&self, event: &SystemEvent) -> Result<()>;
-    
+
     /// Get handler name for debugging
     fn handler_name(&self) -> &str {
         "UnnamedSystemEventHandler"
@@ -59,7 +62,7 @@ pub trait SystemEventHandler: Send + Sync {
 pub trait EventHandler<T: Event>: Send + Sync {
     /// Handle an incoming event
     async fn handle_event(&self, event: &T) -> Result<()>;
-    
+
     /// Get handler name for debugging
     fn handler_name(&self) -> &str {
         "UnnamedHandler"
@@ -192,7 +195,7 @@ impl InMemoryEventBus {
     /// Create a new in-memory event bus
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(1000);
-        
+
         Self {
             subscriptions: RwLock::new(HashMap::new()),
             sender,
@@ -203,18 +206,22 @@ impl InMemoryEventBus {
 #[async_trait]
 impl EventBus for InMemoryEventBus {
     async fn publish_system_event(&self, event: SystemEvent) -> Result<()> {
-        self.sender.send(event.clone())
+        self.sender
+            .send(event.clone())
             .map_err(|e| RuneError::EventBus(format!("Failed to publish event: {}", e)))?;
-        
+
         tracing::debug!("Published system event: {}", event.event_type());
         Ok(())
     }
 
-    async fn subscribe_system_events(&self, _handler: Arc<dyn SystemEventHandler>) -> Result<SubscriptionId> {
+    async fn subscribe_system_events(
+        &self,
+        _handler: Arc<dyn SystemEventHandler>,
+    ) -> Result<SubscriptionId> {
         // Simplified implementation - in a real system we'd store the handler
         // and route events to it based on type
         let id = SubscriptionId::new();
-        
+
         tracing::debug!("Created system event subscription: {:?}", id);
         Ok(id)
     }
@@ -222,7 +229,7 @@ impl EventBus for InMemoryEventBus {
     async fn unsubscribe(&self, id: SubscriptionId) -> Result<()> {
         let mut subscriptions = self.subscriptions.write().await;
         subscriptions.remove(&id);
-        
+
         tracing::debug!("Removed subscription: {:?}", id);
         Ok(())
     }

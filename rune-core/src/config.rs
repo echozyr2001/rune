@@ -28,10 +28,10 @@ impl Config {
     pub fn from_file(path: &PathBuf) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| RuneError::Config(format!("Failed to read config file: {}", e)))?;
-        
+
         let config: Config = serde_json::from_str(&content)
             .map_err(|e| RuneError::Config(format!("Failed to parse config: {}", e)))?;
-        
+
         Ok(config)
     }
 
@@ -39,10 +39,10 @@ impl Config {
     pub fn save_to_file(&self, path: &PathBuf) -> Result<()> {
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| RuneError::Config(format!("Failed to serialize config: {}", e)))?;
-        
+
         std::fs::write(path, content)
             .map_err(|e| RuneError::Config(format!("Failed to write config file: {}", e)))?;
-        
+
         Ok(())
     }
 
@@ -133,7 +133,9 @@ impl PluginConfig {
     where
         T: for<'de> Deserialize<'de>,
     {
-        self.config.get(key).and_then(|v| serde_json::from_value(v.clone()).ok())
+        self.config
+            .get(key)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
 
     /// Set a configuration value
@@ -143,7 +145,7 @@ impl PluginConfig {
     {
         let json_value = serde_json::to_value(value)
             .map_err(|e| RuneError::Config(format!("Failed to serialize config value: {}", e)))?;
-        
+
         self.config.insert(key, json_value);
         Ok(())
     }

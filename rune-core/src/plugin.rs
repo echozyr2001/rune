@@ -16,26 +16,26 @@ use crate::state::StateManager;
 pub trait Plugin: Send + Sync {
     /// Get the plugin name
     fn name(&self) -> &str;
-    
+
     /// Get the plugin version
     fn version(&self) -> &str;
-    
+
     /// Get plugin dependencies (other plugin names)
     fn dependencies(&self) -> Vec<&str> {
         Vec::new()
     }
-    
+
     /// Initialize the plugin with the given context
     async fn initialize(&mut self, context: &PluginContext) -> Result<()>;
-    
+
     /// Shutdown the plugin gracefully
     async fn shutdown(&mut self) -> Result<()>;
-    
+
     /// Get plugin status
     fn status(&self) -> PluginStatus {
         PluginStatus::Active
     }
-    
+
     /// Get services provided by this plugin
     fn provided_services(&self) -> Vec<&str> {
         Vec::new()
@@ -87,20 +87,20 @@ impl PluginRegistry {
     /// Initialize the plugin registry
     pub async fn initialize(&mut self, _context: PluginContext) -> Result<()> {
         tracing::info!("Initializing plugin registry");
-        
+
         // In a complete implementation, this would:
         // 1. Scan for available plugins
         // 2. Resolve dependencies
         // 3. Load plugins in correct order
         // 4. Initialize each plugin
-        
+
         Ok(())
     }
 
     /// Shutdown all plugins
     pub async fn shutdown(&mut self) -> Result<()> {
         tracing::info!("Shutting down plugins");
-        
+
         // Shutdown plugins in reverse load order
         for plugin_name in self.load_order.iter().rev() {
             if let Some(plugin) = self.plugins.get_mut(plugin_name) {
@@ -109,11 +109,11 @@ impl PluginRegistry {
                 }
             }
         }
-        
+
         self.plugins.clear();
         self.plugin_info.clear();
         self.load_order.clear();
-        
+
         Ok(())
     }
 
@@ -125,9 +125,9 @@ impl PluginRegistry {
     ) -> Result<()> {
         let name = plugin.name().to_string();
         let version = plugin.version().to_string();
-        
+
         tracing::info!("Registering plugin: {} v{}", name, version);
-        
+
         // Check dependencies
         for dep in plugin.dependencies() {
             if !self.plugins.contains_key(dep) {
@@ -137,24 +137,32 @@ impl PluginRegistry {
                 )));
             }
         }
-        
+
         // Initialize the plugin
         plugin.initialize(context).await?;
-        
+
         // Store plugin info
         let info = PluginInfo {
             name: name.clone(),
             version: version.clone(),
             status: plugin.status(),
             load_time: SystemTime::now(),
-            dependencies: plugin.dependencies().iter().map(|s| s.to_string()).collect(),
-            provided_services: plugin.provided_services().iter().map(|s| s.to_string()).collect(),
+            dependencies: plugin
+                .dependencies()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            provided_services: plugin
+                .provided_services()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         };
-        
+
         self.plugin_info.insert(name.clone(), info);
         self.plugins.insert(name.clone(), plugin);
         self.load_order.push(name);
-        
+
         Ok(())
     }
 
@@ -226,13 +234,13 @@ impl DependencyGraph {
     pub fn resolve_load_order(&self) -> Result<Vec<String>> {
         // Simplified implementation - in a real system this would do proper topological sorting
         let mut order = Vec::new();
-        
+
         for plugin in self.dependencies.keys() {
             if !order.contains(plugin) {
                 order.push(plugin.clone());
             }
         }
-        
+
         Ok(order)
     }
 }

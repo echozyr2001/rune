@@ -27,7 +27,7 @@ impl Args {
                     .help("Markdown file to serve")
                     .required(true)
                     .index(1)
-                    .value_parser(clap::value_parser!(PathBuf))
+                    .value_parser(clap::value_parser!(PathBuf)),
             )
             .arg(
                 Arg::new("hostname")
@@ -35,7 +35,7 @@ impl Args {
                     .long("hostname")
                     .help("Hostname to bind to")
                     .default_value("127.0.0.1")
-                    .value_parser(clap::value_parser!(String))
+                    .value_parser(clap::value_parser!(String)),
             )
             .arg(
                 Arg::new("port")
@@ -43,26 +43,26 @@ impl Args {
                     .long("port")
                     .help("Port to bind to")
                     .default_value("3000")
-                    .value_parser(clap::value_parser!(u16))
+                    .value_parser(clap::value_parser!(u16)),
             )
             .arg(
                 Arg::new("config")
                     .short('c')
                     .long("config")
                     .help("Configuration file path")
-                    .value_parser(clap::value_parser!(PathBuf))
+                    .value_parser(clap::value_parser!(PathBuf)),
             )
             .arg(
                 Arg::new("plugins-dir")
                     .long("plugins-dir")
                     .help("Directory containing plugins")
-                    .value_parser(clap::value_parser!(PathBuf))
+                    .value_parser(clap::value_parser!(PathBuf)),
             )
             .arg(
                 Arg::new("dev-mode")
                     .long("dev-mode")
                     .help("Enable development mode with enhanced logging")
-                    .action(clap::ArgAction::SetTrue)
+                    .action(clap::ArgAction::SetTrue),
             )
             .get_matches();
 
@@ -90,19 +90,19 @@ impl Args {
         if let Some(extension) = self.file.extension() {
             if extension != "md" && extension != "markdown" {
                 return Err(rune_core::RuneError::config(
-                    "File must have .md or .markdown extension".to_string()
+                    "File must have .md or .markdown extension".to_string(),
                 ));
             }
         } else {
             return Err(rune_core::RuneError::config(
-                "File must have .md or .markdown extension".to_string()
+                "File must have .md or .markdown extension".to_string(),
             ));
         }
 
         // Validate port range
         if self.port == 0 {
             return Err(rune_core::RuneError::config(
-                "Port must be greater than 0".to_string()
+                "Port must be greater than 0".to_string(),
             ));
         }
 
@@ -116,7 +116,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     // Initialize logging
-    let log_level = if args.dev_mode { Level::DEBUG } else { Level::INFO };
+    let log_level = if args.dev_mode {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
     tracing_subscriber::fmt()
         .with_max_level(log_level)
         .with_target(false)

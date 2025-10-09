@@ -1,20 +1,20 @@
 //! Rune Core - The foundational engine for the Rune markdown live editor
-//! 
+//!
 //! This crate provides the core interfaces, event system, and plugin architecture
 //! that powers the modular Rune markdown editor.
 
+pub mod config;
+pub mod error;
 pub mod event;
 pub mod plugin;
-pub mod config;
 pub mod state;
-pub mod error;
 
 // Re-export commonly used types
-pub use event::{Event, EventBus, SystemEvent, SystemEventHandler};
-pub use plugin::{Plugin, PluginContext, PluginRegistry, PluginInfo, PluginStatus};
 pub use config::{Config, PluginConfig, SystemConfig};
+pub use error::{Result, RuneError};
+pub use event::{Event, EventBus, SystemEvent, SystemEventHandler};
+pub use plugin::{Plugin, PluginContext, PluginInfo, PluginRegistry, PluginStatus};
 pub use state::{ApplicationState, StateManager};
-pub use error::{RuneError, Result};
 
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ impl CoreEngine {
         let event_bus = Arc::new(event::InMemoryEventBus::new());
         let state_manager = Arc::new(StateManager::new());
         let plugin_registry = PluginRegistry::new();
-        
+
         Ok(Self {
             event_bus,
             plugin_registry,
@@ -44,16 +44,16 @@ impl CoreEngine {
     /// Initialize the core engine and load plugins
     pub async fn initialize(&mut self) -> Result<()> {
         tracing::info!("Initializing Rune Core Engine");
-        
+
         // Initialize plugin registry with core services
         let context = PluginContext::new(
             self.event_bus.clone(),
             self.config.clone(),
             self.state_manager.clone(),
         );
-        
+
         self.plugin_registry.initialize(context).await?;
-        
+
         tracing::info!("Core Engine initialized successfully");
         Ok(())
     }
@@ -61,9 +61,9 @@ impl CoreEngine {
     /// Shutdown the core engine gracefully
     pub async fn shutdown(&mut self) -> Result<()> {
         tracing::info!("Shutting down Rune Core Engine");
-        
+
         self.plugin_registry.shutdown().await?;
-        
+
         tracing::info!("Core Engine shutdown complete");
         Ok(())
     }
