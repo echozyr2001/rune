@@ -226,6 +226,11 @@ pub enum SystemEvent {
         client_id: Uuid,
         timestamp: SystemTime,
     },
+    /// Plugin is loading
+    PluginLoading {
+        plugin_name: String,
+        timestamp: SystemTime,
+    },
     /// Plugin was loaded
     PluginLoaded {
         plugin_name: String,
@@ -235,6 +240,12 @@ pub enum SystemEvent {
     /// Plugin was unloaded
     PluginUnloaded {
         plugin_name: String,
+        timestamp: SystemTime,
+    },
+    /// Plugin health check result
+    PluginHealthCheck {
+        plugin_name: String,
+        status: crate::plugin::PluginHealthStatus,
         timestamp: SystemTime,
     },
     /// Theme was changed
@@ -264,8 +275,10 @@ impl Event for SystemEvent {
             SystemEvent::FileChanged { .. } => "file_changed",
             SystemEvent::ClientConnected { .. } => "client_connected",
             SystemEvent::ClientDisconnected { .. } => "client_disconnected",
+            SystemEvent::PluginLoading { .. } => "plugin_loading",
             SystemEvent::PluginLoaded { .. } => "plugin_loaded",
             SystemEvent::PluginUnloaded { .. } => "plugin_unloaded",
+            SystemEvent::PluginHealthCheck { .. } => "plugin_health_check",
             SystemEvent::ThemeChanged { .. } => "theme_changed",
             SystemEvent::RenderComplete { .. } => "render_complete",
             SystemEvent::Error { .. } => "error",
@@ -277,8 +290,10 @@ impl Event for SystemEvent {
             SystemEvent::FileChanged { timestamp, .. } => *timestamp,
             SystemEvent::ClientConnected { timestamp, .. } => *timestamp,
             SystemEvent::ClientDisconnected { timestamp, .. } => *timestamp,
+            SystemEvent::PluginLoading { timestamp, .. } => *timestamp,
             SystemEvent::PluginLoaded { timestamp, .. } => *timestamp,
             SystemEvent::PluginUnloaded { timestamp, .. } => *timestamp,
+            SystemEvent::PluginHealthCheck { timestamp, .. } => *timestamp,
             SystemEvent::ThemeChanged { timestamp, .. } => *timestamp,
             SystemEvent::RenderComplete { timestamp, .. } => *timestamp,
             SystemEvent::Error { timestamp, .. } => *timestamp,
@@ -307,6 +322,9 @@ impl Event for SystemEvent {
             SystemEvent::ClientDisconnected { client_id, .. } => {
                 metadata.insert("client_id".to_string(), client_id.to_string());
             }
+            SystemEvent::PluginLoading { plugin_name, .. } => {
+                metadata.insert("plugin_name".to_string(), plugin_name.clone());
+            }
             SystemEvent::PluginLoaded {
                 plugin_name,
                 version,
@@ -317,6 +335,14 @@ impl Event for SystemEvent {
             }
             SystemEvent::PluginUnloaded { plugin_name, .. } => {
                 metadata.insert("plugin_name".to_string(), plugin_name.clone());
+            }
+            SystemEvent::PluginHealthCheck {
+                plugin_name,
+                status,
+                ..
+            } => {
+                metadata.insert("plugin_name".to_string(), plugin_name.clone());
+                metadata.insert("health_status".to_string(), format!("{:?}", status));
             }
             SystemEvent::ThemeChanged { theme_name, .. } => {
                 metadata.insert("theme_name".to_string(), theme_name.clone());
@@ -398,6 +424,14 @@ impl SystemEvent {
         }
     }
 
+    /// Create a new plugin loading event with current timestamp
+    pub fn plugin_loading(plugin_name: String) -> Self {
+        Self::PluginLoading {
+            plugin_name,
+            timestamp: SystemTime::now(),
+        }
+    }
+
     /// Create a new plugin loaded event with current timestamp
     pub fn plugin_loaded(plugin_name: String, version: String) -> Self {
         Self::PluginLoaded {
@@ -411,6 +445,15 @@ impl SystemEvent {
     pub fn plugin_unloaded(plugin_name: String) -> Self {
         Self::PluginUnloaded {
             plugin_name,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new plugin health check event with current timestamp
+    pub fn plugin_health_check(plugin_name: String, status: crate::plugin::PluginHealthStatus) -> Self {
+        Self::PluginHealthCheck {
+            plugin_name,
+            status,
             timestamp: SystemTime::now(),
         }
     }
@@ -458,6 +501,9 @@ impl SystemEvent {
             SystemEvent::ClientDisconnected { client_id, .. } => {
                 format!("Client {} disconnected", client_id)
             }
+            SystemEvent::PluginLoading { plugin_name, .. } => {
+                format!("Plugin {} is loading", plugin_name)
+            }
             SystemEvent::PluginLoaded {
                 plugin_name,
                 version,
@@ -467,6 +513,13 @@ impl SystemEvent {
             }
             SystemEvent::PluginUnloaded { plugin_name, .. } => {
                 format!("Plugin {} unloaded", plugin_name)
+            }
+            SystemEvent::PluginHealthCheck {
+                plugin_name,
+                status,
+                ..
+            } => {
+                format!("Plugin {} health check: {:?}", plugin_name, status)
             }
             SystemEvent::ThemeChanged { theme_name, .. } => {
                 format!("Theme changed to {}", theme_name)
@@ -511,7 +564,10 @@ impl SystemEvent {
     pub fn is_plugin_event(&self) -> bool {
         matches!(
             self,
-            SystemEvent::PluginLoaded { .. } | SystemEvent::PluginUnloaded { .. }
+            SystemEvent::PluginLoading { .. } 
+            | SystemEvent::PluginLoaded { .. } 
+            | SystemEvent::PluginUnloaded { .. }
+            | SystemEvent::PluginHealthCheck { .. }
         )
     }
 }
