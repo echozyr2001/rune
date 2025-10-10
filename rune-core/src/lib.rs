@@ -12,7 +12,10 @@ pub mod state;
 // Re-export commonly used types
 pub use config::{Config, PluginConfig, SystemConfig};
 pub use error::{Result, RuneError};
-pub use event::{Event, EventBus, SystemEvent, SystemEventHandler};
+pub use event::{
+    Event, EventBus, EventFilter, EventHandler, ExtendedEventBus, InMemoryEventBus, SubscriptionId,
+    SystemEvent, SystemEventHandler,
+};
 pub use plugin::{Plugin, PluginContext, PluginInfo, PluginRegistry, PluginStatus};
 pub use state::{ApplicationState, StateManager};
 
