@@ -2,9 +2,11 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
@@ -44,12 +46,15 @@ pub trait Plugin: Send + Sync {
     }
 }
 
-/// Context provided to plugins during initialization
+/// Context provided to plugins during initialization with shared resources access
 #[derive(Clone)]
 pub struct PluginContext {
     pub event_bus: Arc<dyn EventBus>,
     pub config: Arc<Config>,
     pub state_manager: Arc<StateManager>,
+    plugin_name: Option<String>,
+    shared_resources: Arc<RwLock<HashMap<String, Arc<dyn Any + Send + Sync>>>>,
+    plugin_configs: Arc<RwLock<HashMap<String, PluginNamespaceConfig>>>,
 }
 
 impl PluginContext {
@@ -63,7 +68,173 @@ impl PluginContext {
             event_bus,
             config,
             state_manager,
+            plugin_name: None,
+            shared_resources: Arc::new(RwLock::new(HashMap::new())),
+            plugin_configs: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    /// Create a plugin-specific context with namespace access
+    pub fn for_plugin(&self, plugin_name: String) -> Self {
+        let mut context = self.clone();
+        context.plugin_name = Some(plugin_name);
+        context
+    }
+
+    /// Get the current plugin name if this is a plugin-specific context
+    pub fn plugin_name(&self) -> Option<&str> {
+        self.plugin_name.as_deref()
+    }
+
+    /// Store a shared resource that can be accessed by other plugins
+    pub async fn set_shared_resource<T: Any + Send + Sync>(
+        &self,
+        key: String,
+        resource: T,
+    ) -> Result<()> {
+        let mut resources = self.shared_resources.write().await;
+        resources.insert(key, Arc::new(resource));
+        Ok(())
+    }
+
+    /// Get a shared resource by key and type
+    pub async fn get_shared_resource<T: Any + Send + Sync>(&self, key: &str) -> Option<Arc<T>> {
+        let resources = self.shared_resources.read().await;
+        resources
+            .get(key)
+            .and_then(|resource| resource.clone().downcast::<T>().ok())
+    }
+
+    /// Remove a shared resource
+    pub async fn remove_shared_resource(&self, key: &str) -> Result<()> {
+        let mut resources = self.shared_resources.write().await;
+        resources.remove(key);
+        Ok(())
+    }
+
+    /// List all available shared resource keys
+    pub async fn list_shared_resource_keys(&self) -> Vec<String> {
+        let resources = self.shared_resources.read().await;
+        resources.keys().cloned().collect()
+    }
+
+    /// Get plugin-specific configuration with namespace isolation
+    pub async fn get_plugin_config(&self) -> Result<PluginNamespaceConfig> {
+        let plugin_name = self
+            .plugin_name
+            .as_ref()
+            .ok_or_else(|| RuneError::Plugin("No plugin name set in context".to_string()))?;
+
+        let configs = self.plugin_configs.read().await;
+        if let Some(config) = configs.get(plugin_name) {
+            Ok(config.clone())
+        } else {
+            // Create default config if none exists
+            let default_config = PluginNamespaceConfig::new(plugin_name.clone());
+            drop(configs);
+            
+            let mut configs = self.plugin_configs.write().await;
+            configs.insert(plugin_name.clone(), default_config.clone());
+            Ok(default_config)
+        }
+    }
+
+    /// Update plugin-specific configuration
+    pub async fn update_plugin_config(&self, config: PluginNamespaceConfig) -> Result<()> {
+        let plugin_name = self
+            .plugin_name
+            .as_ref()
+            .ok_or_else(|| RuneError::Plugin("No plugin name set in context".to_string()))?;
+
+        if config.namespace != *plugin_name {
+            return Err(RuneError::Plugin(format!(
+                "Config namespace '{}' does not match plugin name '{}'",
+                config.namespace, plugin_name
+            )));
+        }
+
+        let mut configs = self.plugin_configs.write().await;
+        configs.insert(plugin_name.clone(), config);
+        Ok(())
+    }
+
+    /// Load plugin configuration from file
+    pub async fn load_plugin_config_from_file(&self, file_path: &std::path::Path) -> Result<()> {
+        let plugin_name = self
+            .plugin_name
+            .as_ref()
+            .ok_or_else(|| RuneError::Plugin("No plugin name set in context".to_string()))?;
+
+        let config = PluginNamespaceConfig::from_file(plugin_name.clone(), file_path)?;
+        self.update_plugin_config(config).await?;
+        Ok(())
+    }
+
+    /// Save plugin configuration to file
+    pub async fn save_plugin_config_to_file(&self, file_path: &std::path::Path) -> Result<()> {
+        let config = self.get_plugin_config().await?;
+        config.save_to_file(file_path)?;
+        Ok(())
+    }
+
+    /// Get a configuration value from the plugin's namespace
+    pub async fn get_config_value<T>(&self, key: &str) -> Result<Option<T>>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        let config = self.get_plugin_config().await?;
+        Ok(config.get(key))
+    }
+
+    /// Set a configuration value in the plugin's namespace
+    pub async fn set_config_value<T>(&self, key: String, value: T) -> Result<()>
+    where
+        T: Serialize,
+    {
+        let mut config = self.get_plugin_config().await?;
+        config.set(key, value)?;
+        self.update_plugin_config(config).await?;
+        Ok(())
+    }
+
+    /// Validate all plugin configurations
+    pub async fn validate_all_plugin_configs(&self) -> Result<Vec<ConfigValidationResult>> {
+        let configs = self.plugin_configs.read().await;
+        let mut results = Vec::new();
+
+        for (plugin_name, config) in configs.iter() {
+            let validation_result = ConfigValidationResult {
+                plugin_name: plugin_name.clone(),
+                is_valid: config.validate().is_ok(),
+                errors: match config.validate() {
+                    Ok(_) => Vec::new(),
+                    Err(e) => vec![e.to_string()],
+                },
+                warnings: config.get_validation_warnings(),
+            };
+            results.push(validation_result);
+        }
+
+        Ok(results)
+    }
+
+    /// Get configuration for all plugins (admin access)
+    pub async fn get_all_plugin_configs(&self) -> HashMap<String, PluginNamespaceConfig> {
+        let configs = self.plugin_configs.read().await;
+        configs.clone()
+    }
+
+    /// Reload configuration from the main config file
+    pub async fn reload_configurations(&self) -> Result<()> {
+        // Load plugin configurations from the main config
+        for plugin_config in &self.config.plugins {
+            if plugin_config.enabled {
+                let namespace_config = PluginNamespaceConfig::from_plugin_config(plugin_config)?;
+                let mut configs = self.plugin_configs.write().await;
+                configs.insert(plugin_config.name.clone(), namespace_config);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -745,4 +916,453 @@ impl Default for PluginHealthMonitor {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Plugin-specific configuration with namespace isolation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PluginNamespaceConfig {
+    pub namespace: String,
+    pub version: String,
+    pub config: HashMap<String, serde_json::Value>,
+    pub schema: Option<ConfigSchema>,
+    pub metadata: ConfigMetadata,
+}
+
+impl PluginNamespaceConfig {
+    /// Create a new plugin namespace configuration
+    pub fn new(namespace: String) -> Self {
+        Self {
+            namespace,
+            version: "1.0.0".to_string(),
+            config: HashMap::new(),
+            schema: None,
+            metadata: ConfigMetadata::default(),
+        }
+    }
+
+    /// Create from a PluginConfig
+    pub fn from_plugin_config(plugin_config: &crate::config::PluginConfig) -> Result<Self> {
+        Ok(Self {
+            namespace: plugin_config.name.clone(),
+            version: plugin_config.version.clone().unwrap_or_else(|| "1.0.0".to_string()),
+            config: plugin_config.config.clone(),
+            schema: None,
+            metadata: ConfigMetadata {
+                created_at: SystemTime::now(),
+                updated_at: SystemTime::now(),
+                description: None,
+                tags: Vec::new(),
+            },
+        })
+    }
+
+    /// Load configuration from a file
+    pub fn from_file(namespace: String, path: &std::path::Path) -> Result<Self> {
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| RuneError::Config(format!("Failed to read config file: {}", e)))?;
+
+        let mut config: Self = serde_json::from_str(&content)
+            .map_err(|e| RuneError::Config(format!("Failed to parse config: {}", e)))?;
+
+        // Ensure namespace matches
+        if config.namespace != namespace {
+            return Err(RuneError::Config(format!(
+                "Config namespace '{}' does not match expected '{}'",
+                config.namespace, namespace
+            )));
+        }
+
+        config.metadata.updated_at = SystemTime::now();
+        Ok(config)
+    }
+
+    /// Save configuration to a file
+    pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
+        // Create parent directories if they don't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| RuneError::Config(format!("Failed to create config directory: {}", e)))?;
+        }
+
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| RuneError::Config(format!("Failed to serialize config: {}", e)))?;
+
+        std::fs::write(path, content)
+            .map_err(|e| RuneError::Config(format!("Failed to write config file: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Get a configuration value by key
+    pub fn get<T>(&self, key: &str) -> Option<T>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        self.config
+            .get(key)
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+    }
+
+    /// Set a configuration value
+    pub fn set<T>(&mut self, key: String, value: T) -> Result<()>
+    where
+        T: Serialize,
+    {
+        let json_value = serde_json::to_value(value)
+            .map_err(|e| RuneError::Config(format!("Failed to serialize config value: {}", e)))?;
+
+        self.config.insert(key, json_value);
+        self.metadata.updated_at = SystemTime::now();
+        Ok(())
+    }
+
+    /// Remove a configuration value
+    pub fn remove(&mut self, key: &str) -> Option<serde_json::Value> {
+        let result = self.config.remove(key);
+        if result.is_some() {
+            self.metadata.updated_at = SystemTime::now();
+        }
+        result
+    }
+
+    /// Check if a key exists
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.config.contains_key(key)
+    }
+
+    /// Get all configuration keys
+    pub fn keys(&self) -> Vec<String> {
+        self.config.keys().cloned().collect()
+    }
+
+    /// Validate the configuration against its schema
+    pub fn validate(&self) -> Result<()> {
+        if let Some(schema) = &self.schema {
+            schema.validate(&self.config)?;
+        }
+
+        // Basic validation
+        if self.namespace.is_empty() {
+            return Err(RuneError::Config("Namespace cannot be empty".to_string()));
+        }
+
+        if self.version.is_empty() {
+            return Err(RuneError::Config("Version cannot be empty".to_string()));
+        }
+
+        Ok(())
+    }
+
+    /// Get validation warnings (non-fatal issues)
+    pub fn get_validation_warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+
+        // Check for deprecated keys or patterns
+        for key in self.config.keys() {
+            if key.starts_with("_deprecated_") {
+                warnings.push(format!("Configuration key '{}' is deprecated", key));
+            }
+        }
+
+        // Check for missing recommended configurations
+        if let Some(schema) = &self.schema {
+            for (key, field_schema) in &schema.properties {
+                if field_schema.recommended && !self.config.contains_key(key) {
+                    warnings.push(format!("Recommended configuration '{}' is missing", key));
+                }
+            }
+        }
+
+        warnings
+    }
+
+    /// Merge another configuration into this one
+    pub fn merge(&mut self, other: &PluginNamespaceConfig) -> Result<()> {
+        if self.namespace != other.namespace {
+            return Err(RuneError::Config(format!(
+                "Cannot merge configs with different namespaces: '{}' vs '{}'",
+                self.namespace, other.namespace
+            )));
+        }
+
+        // Merge configuration values
+        for (key, value) in &other.config {
+            self.config.insert(key.clone(), value.clone());
+        }
+
+        // Update metadata
+        self.metadata.updated_at = SystemTime::now();
+        if let Some(other_desc) = &other.metadata.description {
+            if self.metadata.description.is_none() {
+                self.metadata.description = Some(other_desc.clone());
+            }
+        }
+
+        // Merge tags
+        for tag in &other.metadata.tags {
+            if !self.metadata.tags.contains(tag) {
+                self.metadata.tags.push(tag.clone());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create a backup of the current configuration
+    pub fn backup(&self, backup_path: &std::path::Path) -> Result<()> {
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let backup_filename = format!(
+            "{}_backup_{}.json",
+            self.namespace, timestamp
+        );
+
+        let backup_file = backup_path.join(backup_filename);
+        self.save_to_file(&backup_file)?;
+
+        info!("Configuration backup created: {}", backup_file.display());
+        Ok(())
+    }
+}
+
+/// Configuration schema for validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigSchema {
+    pub properties: HashMap<String, ConfigFieldSchema>,
+    pub required: Vec<String>,
+    pub additional_properties: bool,
+}
+
+impl ConfigSchema {
+    /// Create a new configuration schema
+    pub fn new() -> Self {
+        Self {
+            properties: HashMap::new(),
+            required: Vec::new(),
+            additional_properties: true,
+        }
+    }
+
+    /// Add a field to the schema
+    pub fn add_field(&mut self, name: String, field_schema: ConfigFieldSchema) {
+        self.properties.insert(name, field_schema);
+    }
+
+    /// Mark a field as required
+    pub fn require_field(&mut self, name: String) {
+        if !self.required.contains(&name) {
+            self.required.push(name);
+        }
+    }
+
+    /// Validate a configuration against this schema
+    pub fn validate(&self, config: &HashMap<String, serde_json::Value>) -> Result<()> {
+        // Check required fields
+        for required_field in &self.required {
+            if !config.contains_key(required_field) {
+                return Err(RuneError::Config(format!(
+                    "Required field '{}' is missing",
+                    required_field
+                )));
+            }
+        }
+
+        // Validate each field
+        for (key, value) in config {
+            if let Some(field_schema) = self.properties.get(key) {
+                field_schema.validate(key, value)?;
+            } else if !self.additional_properties {
+                return Err(RuneError::Config(format!(
+                    "Additional property '{}' is not allowed",
+                    key
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for ConfigSchema {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Schema for individual configuration fields
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigFieldSchema {
+    pub field_type: ConfigFieldType,
+    pub description: Option<String>,
+    pub default_value: Option<serde_json::Value>,
+    pub required: bool,
+    pub recommended: bool,
+    pub validation_rules: Vec<ValidationRule>,
+}
+
+impl ConfigFieldSchema {
+    /// Create a new field schema
+    pub fn new(field_type: ConfigFieldType) -> Self {
+        Self {
+            field_type,
+            description: None,
+            default_value: None,
+            required: false,
+            recommended: false,
+            validation_rules: Vec::new(),
+        }
+    }
+
+    /// Validate a value against this field schema
+    pub fn validate(&self, field_name: &str, value: &serde_json::Value) -> Result<()> {
+        // Type validation
+        if !self.field_type.matches_value(value) {
+            return Err(RuneError::Config(format!(
+                "Field '{}' has incorrect type. Expected {:?}, got {:?}",
+                field_name, self.field_type, value
+            )));
+        }
+
+        // Custom validation rules
+        for rule in &self.validation_rules {
+            rule.validate(field_name, value)?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Types of configuration fields
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ConfigFieldType {
+    String,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Any,
+}
+
+impl ConfigFieldType {
+    /// Check if a JSON value matches this field type
+    pub fn matches_value(&self, value: &serde_json::Value) -> bool {
+        matches!(
+            (self, value),
+            (ConfigFieldType::String, serde_json::Value::String(_))
+                | (ConfigFieldType::Number, serde_json::Value::Number(_))
+                | (ConfigFieldType::Boolean, serde_json::Value::Bool(_))
+                | (ConfigFieldType::Array, serde_json::Value::Array(_))
+                | (ConfigFieldType::Object, serde_json::Value::Object(_))
+                | (ConfigFieldType::Any, _)
+        )
+    }
+}
+
+/// Validation rules for configuration fields
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ValidationRule {
+    MinLength(usize),
+    MaxLength(usize),
+    Pattern(String),
+    Range { min: f64, max: f64 },
+    OneOf(Vec<serde_json::Value>),
+    Custom { name: String, description: String },
+}
+
+impl ValidationRule {
+    /// Validate a value against this rule
+    pub fn validate(&self, field_name: &str, value: &serde_json::Value) -> Result<()> {
+        match self {
+            ValidationRule::MinLength(min_len) => {
+                if let serde_json::Value::String(s) = value {
+                    if s.len() < *min_len {
+                        return Err(RuneError::Config(format!(
+                            "Field '{}' must be at least {} characters long",
+                            field_name, min_len
+                        )));
+                    }
+                }
+            }
+            ValidationRule::MaxLength(max_len) => {
+                if let serde_json::Value::String(s) = value {
+                    if s.len() > *max_len {
+                        return Err(RuneError::Config(format!(
+                            "Field '{}' must be at most {} characters long",
+                            field_name, max_len
+                        )));
+                    }
+                }
+            }
+            ValidationRule::Pattern(pattern) => {
+                if let serde_json::Value::String(s) = value {
+                    // In a real implementation, you'd use a regex crate
+                    // For now, just check if it's not empty
+                    if s.is_empty() && pattern == "non_empty" {
+                        return Err(RuneError::Config(format!(
+                            "Field '{}' cannot be empty",
+                            field_name
+                        )));
+                    }
+                }
+            }
+            ValidationRule::Range { min, max } => {
+                if let serde_json::Value::Number(n) = value {
+                    if let Some(val) = n.as_f64() {
+                        if val < *min || val > *max {
+                            return Err(RuneError::Config(format!(
+                                "Field '{}' must be between {} and {}",
+                                field_name, min, max
+                            )));
+                        }
+                    }
+                }
+            }
+            ValidationRule::OneOf(allowed_values) => {
+                if !allowed_values.contains(value) {
+                    return Err(RuneError::Config(format!(
+                        "Field '{}' must be one of: {:?}",
+                        field_name, allowed_values
+                    )));
+                }
+            }
+            ValidationRule::Custom { name, description: _ } => {
+                // Custom validation would be implemented by plugins
+                debug!("Custom validation '{}' for field '{}'", name, field_name);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Configuration metadata
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigMetadata {
+    pub created_at: SystemTime,
+    pub updated_at: SystemTime,
+    pub description: Option<String>,
+    pub tags: Vec<String>,
+}
+
+impl Default for ConfigMetadata {
+    fn default() -> Self {
+        let now = SystemTime::now();
+        Self {
+            created_at: now,
+            updated_at: now,
+            description: None,
+            tags: Vec::new(),
+        }
+    }
+}
+
+/// Result of configuration validation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigValidationResult {
+    pub plugin_name: String,
+    pub is_valid: bool,
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
 }
