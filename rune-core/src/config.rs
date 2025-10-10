@@ -109,7 +109,11 @@ impl Config {
 
         // Merge plugin configurations
         for other_plugin in other.plugins {
-            if let Some(existing_plugin) = self.plugins.iter_mut().find(|p| p.name == other_plugin.name) {
+            if let Some(existing_plugin) = self
+                .plugins
+                .iter_mut()
+                .find(|p| p.name == other_plugin.name)
+            {
                 // Merge existing plugin config
                 for (key, value) in other_plugin.config {
                     existing_plugin.config.insert(key, value);
@@ -264,7 +268,11 @@ impl PluginConfig {
         }
 
         // Validate plugin name format (alphanumeric, hyphens, underscores)
-        if !self.name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+        if !self
+            .name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
             return Err(RuneError::Config(format!(
                 "Plugin name '{}' contains invalid characters. Only alphanumeric, hyphens, and underscores are allowed",
                 self.name

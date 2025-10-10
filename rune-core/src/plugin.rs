@@ -132,7 +132,7 @@ impl PluginContext {
             // Create default config if none exists
             let default_config = PluginNamespaceConfig::new(plugin_name.clone());
             drop(configs);
-            
+
             let mut configs = self.plugin_configs.write().await;
             configs.insert(plugin_name.clone(), default_config.clone());
             Ok(default_config)
@@ -944,7 +944,10 @@ impl PluginNamespaceConfig {
     pub fn from_plugin_config(plugin_config: &crate::config::PluginConfig) -> Result<Self> {
         Ok(Self {
             namespace: plugin_config.name.clone(),
-            version: plugin_config.version.clone().unwrap_or_else(|| "1.0.0".to_string()),
+            version: plugin_config
+                .version
+                .clone()
+                .unwrap_or_else(|| "1.0.0".to_string()),
             config: plugin_config.config.clone(),
             schema: None,
             metadata: ConfigMetadata {
@@ -980,8 +983,9 @@ impl PluginNamespaceConfig {
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<()> {
         // Create parent directories if they don't exist
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| RuneError::Config(format!("Failed to create config directory: {}", e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                RuneError::Config(format!("Failed to create config directory: {}", e))
+            })?;
         }
 
         let content = serde_json::to_string_pretty(self)
@@ -1115,10 +1119,7 @@ impl PluginNamespaceConfig {
             .unwrap_or_default()
             .as_secs();
 
-        let backup_filename = format!(
-            "{}_backup_{}.json",
-            self.namespace, timestamp
-        );
+        let backup_filename = format!("{}_backup_{}.json", self.namespace, timestamp);
 
         let backup_file = backup_path.join(backup_filename);
         self.save_to_file(&backup_file)?;
@@ -1328,7 +1329,10 @@ impl ValidationRule {
                     )));
                 }
             }
-            ValidationRule::Custom { name, description: _ } => {
+            ValidationRule::Custom {
+                name,
+                description: _,
+            } => {
                 // Custom validation would be implemented by plugins
                 debug!("Custom validation '{}' for field '{}'", name, field_name);
             }

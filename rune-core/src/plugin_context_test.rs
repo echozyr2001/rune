@@ -164,16 +164,22 @@ mod plugin_context_tests {
 
         // Create and save configuration
         let mut config = PluginNamespaceConfig::new("file-test".to_string());
-        config.set("setting1".to_string(), "value1".to_string()).unwrap();
+        config
+            .set("setting1".to_string(), "value1".to_string())
+            .unwrap();
         config.set("setting2".to_string(), 42).unwrap();
 
         config.save_to_file(&config_path).unwrap();
         assert!(config_path.exists());
 
         // Load configuration from file
-        let loaded_config = PluginNamespaceConfig::from_file("file-test".to_string(), &config_path).unwrap();
+        let loaded_config =
+            PluginNamespaceConfig::from_file("file-test".to_string(), &config_path).unwrap();
         assert_eq!(loaded_config.namespace, "file-test");
-        assert_eq!(loaded_config.get::<String>("setting1"), Some("value1".to_string()));
+        assert_eq!(
+            loaded_config.get::<String>("setting1"),
+            Some("value1".to_string())
+        );
         assert_eq!(loaded_config.get::<i32>("setting2"), Some(42));
 
         // Test backup functionality
@@ -185,7 +191,10 @@ mod plugin_context_tests {
             .unwrap()
             .filter_map(|entry| entry.ok())
             .filter(|entry| {
-                entry.file_name().to_string_lossy().starts_with("file-test_backup_")
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("file-test_backup_")
             })
             .collect();
         assert!(!backup_files.is_empty());
@@ -195,26 +204,45 @@ mod plugin_context_tests {
     async fn test_configuration_merging() {
         // Create base configuration
         let mut base_config = PluginNamespaceConfig::new("merge-test".to_string());
-        base_config.set("base_setting".to_string(), "base_value".to_string()).unwrap();
-        base_config.set("shared_setting".to_string(), "base_shared".to_string()).unwrap();
+        base_config
+            .set("base_setting".to_string(), "base_value".to_string())
+            .unwrap();
+        base_config
+            .set("shared_setting".to_string(), "base_shared".to_string())
+            .unwrap();
 
         // Create override configuration
         let mut override_config = PluginNamespaceConfig::new("merge-test".to_string());
-        override_config.set("override_setting".to_string(), "override_value".to_string()).unwrap();
-        override_config.set("shared_setting".to_string(), "override_shared".to_string()).unwrap();
+        override_config
+            .set("override_setting".to_string(), "override_value".to_string())
+            .unwrap();
+        override_config
+            .set("shared_setting".to_string(), "override_shared".to_string())
+            .unwrap();
 
         // Merge configurations
         base_config.merge(&override_config).unwrap();
 
         // Verify merged results
-        assert_eq!(base_config.get::<String>("base_setting"), Some("base_value".to_string()));
-        assert_eq!(base_config.get::<String>("override_setting"), Some("override_value".to_string()));
-        assert_eq!(base_config.get::<String>("shared_setting"), Some("override_shared".to_string()));
+        assert_eq!(
+            base_config.get::<String>("base_setting"),
+            Some("base_value".to_string())
+        );
+        assert_eq!(
+            base_config.get::<String>("override_setting"),
+            Some("override_value".to_string())
+        );
+        assert_eq!(
+            base_config.get::<String>("shared_setting"),
+            Some("override_shared".to_string())
+        );
 
         // Test merging with different namespaces (should fail)
         let mut different_namespace = PluginNamespaceConfig::new("different".to_string());
-        different_namespace.set("test".to_string(), "value".to_string()).unwrap();
-        
+        different_namespace
+            .set("test".to_string(), "value".to_string())
+            .unwrap();
+
         assert!(base_config.merge(&different_namespace).is_err());
     }
 
@@ -225,11 +253,16 @@ mod plugin_context_tests {
         let short_value = serde_json::Value::String("abc".to_string());
         let long_value = serde_json::Value::String("abcdef".to_string());
 
-        assert!(min_length_rule.validate("test_field", &short_value).is_err());
+        assert!(min_length_rule
+            .validate("test_field", &short_value)
+            .is_err());
         assert!(min_length_rule.validate("test_field", &long_value).is_ok());
 
         // Test Range validation
-        let range_rule = ValidationRule::Range { min: 10.0, max: 100.0 };
+        let range_rule = ValidationRule::Range {
+            min: 10.0,
+            max: 100.0,
+        };
         let low_value = serde_json::Value::Number(serde_json::Number::from(5));
         let valid_value = serde_json::Value::Number(serde_json::Number::from(50));
         let high_value = serde_json::Value::Number(serde_json::Number::from(150));
@@ -256,7 +289,9 @@ mod plugin_context_tests {
         // Test string type matching
         let string_type = ConfigFieldType::String;
         assert!(string_type.matches_value(&serde_json::Value::String("test".to_string())));
-        assert!(!string_type.matches_value(&serde_json::Value::Number(serde_json::Number::from(42))));
+        assert!(
+            !string_type.matches_value(&serde_json::Value::Number(serde_json::Number::from(42)))
+        );
 
         // Test number type matching
         let number_type = ConfigFieldType::Number;
@@ -303,14 +338,10 @@ mod plugin_context_tests {
             .unwrap();
 
         // Verify isolation
-        let plugin1_value: Option<String> = plugin1_context
-            .get_config_value("setting")
-            .await
-            .unwrap();
-        let plugin2_value: Option<String> = plugin2_context
-            .get_config_value("setting")
-            .await
-            .unwrap();
+        let plugin1_value: Option<String> =
+            plugin1_context.get_config_value("setting").await.unwrap();
+        let plugin2_value: Option<String> =
+            plugin2_context.get_config_value("setting").await.unwrap();
 
         assert_eq!(plugin1_value, Some("plugin1_value".to_string()));
         assert_eq!(plugin2_value, Some("plugin2_value".to_string()));
@@ -321,7 +352,10 @@ mod plugin_context_tests {
 
         assert_eq!(plugin1_config.namespace, "plugin1");
         assert_eq!(plugin2_config.namespace, "plugin2");
-        assert_ne!(plugin1_config.get::<String>("setting"), plugin2_config.get::<String>("setting"));
+        assert_ne!(
+            plugin1_config.get::<String>("setting"),
+            plugin2_config.get::<String>("setting")
+        );
     }
 
     #[tokio::test]
@@ -341,23 +375,30 @@ mod plugin_context_tests {
         // Set up invalid configuration with schema
         let mut invalid_config = PluginNamespaceConfig::new("invalid-plugin".to_string());
         let mut schema = ConfigSchema::new();
-        
+
         let mut required_field = ConfigFieldSchema::new(ConfigFieldType::String);
         required_field.required = true;
         schema.add_field("required_field".to_string(), required_field);
         schema.require_field("required_field".to_string());
-        
+
         invalid_config.schema = Some(schema);
         // Don't set the required field, making it invalid
-        
-        invalid_plugin.update_plugin_config(invalid_config).await.unwrap();
+
+        invalid_plugin
+            .update_plugin_config(invalid_config)
+            .await
+            .unwrap();
 
         // Validate all configurations
         let validation_results = context.validate_all_plugin_configs().await.unwrap();
 
         // Find results for our test plugins
-        let valid_result = validation_results.iter().find(|r| r.plugin_name == "valid-plugin");
-        let invalid_result = validation_results.iter().find(|r| r.plugin_name == "invalid-plugin");
+        let valid_result = validation_results
+            .iter()
+            .find(|r| r.plugin_name == "valid-plugin");
+        let invalid_result = validation_results
+            .iter()
+            .find(|r| r.plugin_name == "invalid-plugin");
 
         assert!(valid_result.is_some());
         assert!(valid_result.unwrap().is_valid);
