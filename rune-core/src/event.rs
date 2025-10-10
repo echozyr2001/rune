@@ -52,11 +52,12 @@ pub mod serialization {
 
     /// Format event for logging with timestamp
     pub fn format_event_for_log(event: &SystemEvent) -> String {
-        let timestamp = event.timestamp()
+        let timestamp = event
+            .timestamp()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         format!(
             "[{}] {}: {}",
             timestamp,
@@ -71,14 +72,16 @@ pub mod serialization {
         let metadata_str = if metadata.is_empty() {
             String::new()
         } else {
-            format!(" ({})", 
-                metadata.iter()
+            format!(
+                " ({})",
+                metadata
+                    .iter()
                     .map(|(k, v)| format!("{}={}", k, v))
                     .collect::<Vec<_>>()
                     .join(", ")
             )
         };
-        
+
         format!("{}{}", event.description(), metadata_str)
     }
 }
@@ -284,13 +287,17 @@ impl Event for SystemEvent {
 
     fn metadata(&self) -> HashMap<String, String> {
         let mut metadata = HashMap::new();
-        
+
         match self {
-            SystemEvent::FileChanged { path, change_type, .. } => {
+            SystemEvent::FileChanged {
+                path, change_type, ..
+            } => {
                 metadata.insert("path".to_string(), path.display().to_string());
                 metadata.insert("change_type".to_string(), format!("{:?}", change_type));
             }
-            SystemEvent::ClientConnected { client_id, info, .. } => {
+            SystemEvent::ClientConnected {
+                client_id, info, ..
+            } => {
                 metadata.insert("client_id".to_string(), client_id.to_string());
                 metadata.insert("ip_address".to_string(), info.ip_address.clone());
                 if let Some(user_agent) = &info.user_agent {
@@ -300,7 +307,11 @@ impl Event for SystemEvent {
             SystemEvent::ClientDisconnected { client_id, .. } => {
                 metadata.insert("client_id".to_string(), client_id.to_string());
             }
-            SystemEvent::PluginLoaded { plugin_name, version, .. } => {
+            SystemEvent::PluginLoaded {
+                plugin_name,
+                version,
+                ..
+            } => {
                 metadata.insert("plugin_name".to_string(), plugin_name.clone());
                 metadata.insert("version".to_string(), version.clone());
             }
@@ -310,17 +321,26 @@ impl Event for SystemEvent {
             SystemEvent::ThemeChanged { theme_name, .. } => {
                 metadata.insert("theme_name".to_string(), theme_name.clone());
             }
-            SystemEvent::RenderComplete { content_hash, duration, .. } => {
+            SystemEvent::RenderComplete {
+                content_hash,
+                duration,
+                ..
+            } => {
                 metadata.insert("content_hash".to_string(), content_hash.clone());
                 metadata.insert("duration_ms".to_string(), duration.as_millis().to_string());
             }
-            SystemEvent::Error { source, message, severity, .. } => {
+            SystemEvent::Error {
+                source,
+                message,
+                severity,
+                ..
+            } => {
                 metadata.insert("source".to_string(), source.clone());
                 metadata.insert("message".to_string(), message.clone());
                 metadata.insert("severity".to_string(), format!("{:?}", severity));
             }
         }
-        
+
         metadata
     }
 }
@@ -425,16 +445,24 @@ impl SystemEvent {
     /// Get a human-readable description of the event
     pub fn description(&self) -> String {
         match self {
-            SystemEvent::FileChanged { path, change_type, .. } => {
+            SystemEvent::FileChanged {
+                path, change_type, ..
+            } => {
                 format!("File {} was {:?}", path.display(), change_type)
             }
-            SystemEvent::ClientConnected { client_id, info, .. } => {
+            SystemEvent::ClientConnected {
+                client_id, info, ..
+            } => {
                 format!("Client {} connected from {}", client_id, info.ip_address)
             }
             SystemEvent::ClientDisconnected { client_id, .. } => {
                 format!("Client {} disconnected", client_id)
             }
-            SystemEvent::PluginLoaded { plugin_name, version, .. } => {
+            SystemEvent::PluginLoaded {
+                plugin_name,
+                version,
+                ..
+            } => {
                 format!("Plugin {} v{} loaded", plugin_name, version)
             }
             SystemEvent::PluginUnloaded { plugin_name, .. } => {
@@ -443,10 +471,19 @@ impl SystemEvent {
             SystemEvent::ThemeChanged { theme_name, .. } => {
                 format!("Theme changed to {}", theme_name)
             }
-            SystemEvent::RenderComplete { content_hash, duration, .. } => {
+            SystemEvent::RenderComplete {
+                content_hash,
+                duration,
+                ..
+            } => {
                 format!("Rendered content {} in {:?}", content_hash, duration)
             }
-            SystemEvent::Error { source, message, severity, .. } => {
+            SystemEvent::Error {
+                source,
+                message,
+                severity,
+                ..
+            } => {
                 format!("{:?} error from {}: {}", severity, source, message)
             }
         }
