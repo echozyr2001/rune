@@ -12,6 +12,80 @@ use uuid::Uuid;
 
 use crate::error::Result;
 
+/// Event serialization utilities for persistence and debugging
+pub mod serialization {
+    use super::*;
+    use std::io::Write;
+
+    /// Serialize an event to JSON string
+    pub fn serialize_event(event: &SystemEvent) -> Result<String> {
+        serde_json::to_string(event).map_err(crate::error::RuneError::Json)
+    }
+
+    /// Serialize an event to pretty JSON string for debugging
+    pub fn serialize_event_pretty(event: &SystemEvent) -> Result<String> {
+        serde_json::to_string_pretty(event).map_err(crate::error::RuneError::Json)
+    }
+
+    /// Deserialize an event from JSON string
+    pub fn deserialize_event(json: &str) -> Result<SystemEvent> {
+        serde_json::from_str(json).map_err(crate::error::RuneError::Json)
+    }
+
+    /// Write event to a writer in JSON format
+    pub fn write_event<W: Write>(writer: &mut W, event: &SystemEvent) -> Result<()> {
+        let json = serialize_event(event)?;
+        writer.write_all(json.as_bytes())?;
+        writer.write_all(b"\n")?;
+        Ok(())
+    }
+
+    /// Event batch serialization for efficient storage
+    pub fn serialize_event_batch(events: &[SystemEvent]) -> Result<String> {
+        serde_json::to_string(events).map_err(crate::error::RuneError::Json)
+    }
+
+    /// Deserialize a batch of events
+    pub fn deserialize_event_batch(json: &str) -> Result<Vec<SystemEvent>> {
+        serde_json::from_str(json).map_err(crate::error::RuneError::Json)
+    }
+
+    /// Format event for logging with timestamp
+    pub fn format_event_for_log(event: &SystemEvent) -> String {
+        let timestamp = event
+            .timestamp()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        format!(
+            "[{}] {}: {}",
+            timestamp,
+            event.event_type().to_uppercase(),
+            event.description()
+        )
+    }
+
+    /// Create a compact event representation for debugging
+    pub fn event_debug_string(event: &SystemEvent) -> String {
+        let metadata = event.metadata();
+        let metadata_str = if metadata.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({})",
+                metadata
+                    .iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+
+        format!("{}{}", event.description(), metadata_str)
+    }
+}
+
 /// Core trait for all events in the system
 #[async_trait]
 pub trait Event: Send + Sync + Clone + std::fmt::Debug + 'static {
@@ -210,6 +284,65 @@ impl Event for SystemEvent {
             SystemEvent::Error { timestamp, .. } => *timestamp,
         }
     }
+
+    fn metadata(&self) -> HashMap<String, String> {
+        let mut metadata = HashMap::new();
+
+        match self {
+            SystemEvent::FileChanged {
+                path, change_type, ..
+            } => {
+                metadata.insert("path".to_string(), path.display().to_string());
+                metadata.insert("change_type".to_string(), format!("{:?}", change_type));
+            }
+            SystemEvent::ClientConnected {
+                client_id, info, ..
+            } => {
+                metadata.insert("client_id".to_string(), client_id.to_string());
+                metadata.insert("ip_address".to_string(), info.ip_address.clone());
+                if let Some(user_agent) = &info.user_agent {
+                    metadata.insert("user_agent".to_string(), user_agent.clone());
+                }
+            }
+            SystemEvent::ClientDisconnected { client_id, .. } => {
+                metadata.insert("client_id".to_string(), client_id.to_string());
+            }
+            SystemEvent::PluginLoaded {
+                plugin_name,
+                version,
+                ..
+            } => {
+                metadata.insert("plugin_name".to_string(), plugin_name.clone());
+                metadata.insert("version".to_string(), version.clone());
+            }
+            SystemEvent::PluginUnloaded { plugin_name, .. } => {
+                metadata.insert("plugin_name".to_string(), plugin_name.clone());
+            }
+            SystemEvent::ThemeChanged { theme_name, .. } => {
+                metadata.insert("theme_name".to_string(), theme_name.clone());
+            }
+            SystemEvent::RenderComplete {
+                content_hash,
+                duration,
+                ..
+            } => {
+                metadata.insert("content_hash".to_string(), content_hash.clone());
+                metadata.insert("duration_ms".to_string(), duration.as_millis().to_string());
+            }
+            SystemEvent::Error {
+                source,
+                message,
+                severity,
+                ..
+            } => {
+                metadata.insert("source".to_string(), source.clone());
+                metadata.insert("message".to_string(), message.clone());
+                metadata.insert("severity".to_string(), format!("{:?}", severity));
+            }
+        }
+
+        metadata
+    }
 }
 
 /// Types of file system changes
@@ -236,6 +369,151 @@ pub enum ErrorSeverity {
     Medium,
     High,
     Critical,
+}
+
+impl SystemEvent {
+    /// Create a new file changed event with current timestamp
+    pub fn file_changed(path: PathBuf, change_type: ChangeType) -> Self {
+        Self::FileChanged {
+            path,
+            change_type,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new client connected event with current timestamp
+    pub fn client_connected(client_id: Uuid, info: ClientInfo) -> Self {
+        Self::ClientConnected {
+            client_id,
+            info,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new client disconnected event with current timestamp
+    pub fn client_disconnected(client_id: Uuid) -> Self {
+        Self::ClientDisconnected {
+            client_id,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new plugin loaded event with current timestamp
+    pub fn plugin_loaded(plugin_name: String, version: String) -> Self {
+        Self::PluginLoaded {
+            plugin_name,
+            version,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new plugin unloaded event with current timestamp
+    pub fn plugin_unloaded(plugin_name: String) -> Self {
+        Self::PluginUnloaded {
+            plugin_name,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new theme changed event with current timestamp
+    pub fn theme_changed(theme_name: String) -> Self {
+        Self::ThemeChanged {
+            theme_name,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new render complete event with current timestamp
+    pub fn render_complete(content_hash: String, duration: Duration) -> Self {
+        Self::RenderComplete {
+            content_hash,
+            duration,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new error event with current timestamp
+    pub fn error(source: String, message: String, severity: ErrorSeverity) -> Self {
+        Self::Error {
+            source,
+            message,
+            severity,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Get a human-readable description of the event
+    pub fn description(&self) -> String {
+        match self {
+            SystemEvent::FileChanged {
+                path, change_type, ..
+            } => {
+                format!("File {} was {:?}", path.display(), change_type)
+            }
+            SystemEvent::ClientConnected {
+                client_id, info, ..
+            } => {
+                format!("Client {} connected from {}", client_id, info.ip_address)
+            }
+            SystemEvent::ClientDisconnected { client_id, .. } => {
+                format!("Client {} disconnected", client_id)
+            }
+            SystemEvent::PluginLoaded {
+                plugin_name,
+                version,
+                ..
+            } => {
+                format!("Plugin {} v{} loaded", plugin_name, version)
+            }
+            SystemEvent::PluginUnloaded { plugin_name, .. } => {
+                format!("Plugin {} unloaded", plugin_name)
+            }
+            SystemEvent::ThemeChanged { theme_name, .. } => {
+                format!("Theme changed to {}", theme_name)
+            }
+            SystemEvent::RenderComplete {
+                content_hash,
+                duration,
+                ..
+            } => {
+                format!("Rendered content {} in {:?}", content_hash, duration)
+            }
+            SystemEvent::Error {
+                source,
+                message,
+                severity,
+                ..
+            } => {
+                format!("{:?} error from {}: {}", severity, source, message)
+            }
+        }
+    }
+
+    /// Check if this is an error event
+    pub fn is_error(&self) -> bool {
+        matches!(self, SystemEvent::Error { .. })
+    }
+
+    /// Check if this is a file system event
+    pub fn is_file_event(&self) -> bool {
+        matches!(self, SystemEvent::FileChanged { .. })
+    }
+
+    /// Check if this is a client event
+    pub fn is_client_event(&self) -> bool {
+        matches!(
+            self,
+            SystemEvent::ClientConnected { .. } | SystemEvent::ClientDisconnected { .. }
+        )
+    }
+
+    /// Check if this is a plugin event
+    pub fn is_plugin_event(&self) -> bool {
+        matches!(
+            self,
+            SystemEvent::PluginLoaded { .. } | SystemEvent::PluginUnloaded { .. }
+        )
+    }
 }
 
 /// Subscription information stored in the event bus
