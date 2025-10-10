@@ -450,7 +450,10 @@ impl SystemEvent {
     }
 
     /// Create a new plugin health check event with current timestamp
-    pub fn plugin_health_check(plugin_name: String, status: crate::plugin::PluginHealthStatus) -> Self {
+    pub fn plugin_health_check(
+        plugin_name: String,
+        status: crate::plugin::PluginHealthStatus,
+    ) -> Self {
         Self::PluginHealthCheck {
             plugin_name,
             status,
@@ -564,10 +567,10 @@ impl SystemEvent {
     pub fn is_plugin_event(&self) -> bool {
         matches!(
             self,
-            SystemEvent::PluginLoading { .. } 
-            | SystemEvent::PluginLoaded { .. } 
-            | SystemEvent::PluginUnloaded { .. }
-            | SystemEvent::PluginHealthCheck { .. }
+            SystemEvent::PluginLoading { .. }
+                | SystemEvent::PluginLoaded { .. }
+                | SystemEvent::PluginUnloaded { .. }
+                | SystemEvent::PluginHealthCheck { .. }
         )
     }
 }

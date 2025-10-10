@@ -10,7 +10,6 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::Arc;
 
-
     /// Mock plugin for testing
     struct MockPlugin {
         name: String,
@@ -123,8 +122,7 @@ mod tests {
 
         // Try to register a plugin with missing dependency
         let plugin = Box::new(
-            MockPlugin::new("dependent-plugin", "1.0.0")
-                .with_dependencies(vec!["missing-plugin"])
+            MockPlugin::new("dependent-plugin", "1.0.0").with_dependencies(vec!["missing-plugin"]),
         );
 
         let result = registry.register_plugin(plugin, &context).await;
@@ -141,14 +139,19 @@ mod tests {
 
         // Register base plugin first
         let base_plugin = Box::new(MockPlugin::new("base-plugin", "1.0.0"));
-        registry.register_plugin(base_plugin, &context).await.unwrap();
+        registry
+            .register_plugin(base_plugin, &context)
+            .await
+            .unwrap();
 
         // Register dependent plugin
         let dependent_plugin = Box::new(
-            MockPlugin::new("dependent-plugin", "1.0.0")
-                .with_dependencies(vec!["base-plugin"])
+            MockPlugin::new("dependent-plugin", "1.0.0").with_dependencies(vec!["base-plugin"]),
         );
-        registry.register_plugin(dependent_plugin, &context).await.unwrap();
+        registry
+            .register_plugin(dependent_plugin, &context)
+            .await
+            .unwrap();
 
         // Verify both plugins are loaded
         assert!(registry.is_plugin_loaded("base-plugin"));
@@ -192,14 +195,19 @@ mod tests {
 
         // Register base plugin
         let base_plugin = Box::new(MockPlugin::new("base-plugin", "1.0.0"));
-        registry.register_plugin(base_plugin, &context).await.unwrap();
+        registry
+            .register_plugin(base_plugin, &context)
+            .await
+            .unwrap();
 
         // Register dependent plugin
         let dependent_plugin = Box::new(
-            MockPlugin::new("dependent-plugin", "1.0.0")
-                .with_dependencies(vec!["base-plugin"])
+            MockPlugin::new("dependent-plugin", "1.0.0").with_dependencies(vec!["base-plugin"]),
         );
-        registry.register_plugin(dependent_plugin, &context).await.unwrap();
+        registry
+            .register_plugin(dependent_plugin, &context)
+            .await
+            .unwrap();
 
         // Try to unregister base plugin - should fail
         let result = registry.unregister_plugin("base-plugin").await;
@@ -271,13 +279,19 @@ mod tests {
         registry.register_plugin(plugin, &context).await.unwrap();
 
         // Get initial restart count
-        let initial_count = registry.get_plugin_info("test-plugin").unwrap().restart_count;
+        let initial_count = registry
+            .get_plugin_info("test-plugin")
+            .unwrap()
+            .restart_count;
 
         // Restart the plugin
         registry.restart_plugin("test-plugin").await.unwrap();
 
         // Check restart count increased
-        let new_count = registry.get_plugin_info("test-plugin").unwrap().restart_count;
+        let new_count = registry
+            .get_plugin_info("test-plugin")
+            .unwrap()
+            .restart_count;
         assert_eq!(new_count, initial_count + 1);
     }
 
