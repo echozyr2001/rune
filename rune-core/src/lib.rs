@@ -9,6 +9,9 @@ pub mod event;
 pub mod plugin;
 pub mod state;
 
+#[cfg(test)]
+mod event_test;
+
 // Re-export commonly used types
 pub use config::{Config, PluginConfig, SystemConfig};
 pub use error::{Result, RuneError};
