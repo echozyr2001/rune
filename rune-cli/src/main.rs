@@ -19,9 +19,9 @@ pub struct DiscoveredPlugin {
 /// Plugin type enumeration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PluginType {
-    Native,      // Rust dynamic library
-    Script,      // Script-based plugin
-    Config,      // Configuration-only plugin
+    Native, // Rust dynamic library
+    Script, // Script-based plugin
+    Config, // Configuration-only plugin
     Unknown,
 }
 
@@ -556,14 +556,17 @@ async fn list_plugins(args: &Args) -> Result<()> {
 
     // Show system health in dev mode
     if args.dev_mode {
-        println!("🏥 System Health: {:?}", plugin_registry.get_system_health());
-        
+        println!(
+            "🏥 System Health: {:?}",
+            plugin_registry.get_system_health()
+        );
+
         let all_plugins = plugin_registry.list_plugins();
         let unhealthy_plugins: Vec<_> = all_plugins
             .iter()
             .filter(|p| format!("{:?}", p.health_status).contains("Unhealthy"))
             .collect();
-            
+
         if !unhealthy_plugins.is_empty() {
             println!("\n⚠️  Unhealthy Plugins:");
             for plugin in unhealthy_plugins {
@@ -674,9 +677,8 @@ fn scan_plugin_directory(dir: &PathBuf) -> Result<Vec<DiscoveredPlugin>> {
     })?;
 
     for entry in entries {
-        let entry = entry.map_err(|e| {
-            RuneError::config(format!("Failed to read directory entry: {}", e))
-        })?;
+        let entry = entry
+            .map_err(|e| RuneError::config(format!("Failed to read directory entry: {}", e)))?;
 
         let path = entry.path();
         let file_name = entry.file_name();
@@ -703,7 +705,11 @@ fn scan_plugin_directory(dir: &PathBuf) -> Result<Vec<DiscoveredPlugin>> {
                         continue;
                     }
                     Err(e) => {
-                        warn!("Failed to load plugin manifest {}: {}", manifest_path.display(), e);
+                        warn!(
+                            "Failed to load plugin manifest {}: {}",
+                            manifest_path.display(),
+                            e
+                        );
                         PluginType::Unknown
                     }
                 }
@@ -765,7 +771,11 @@ fn scan_plugin_directory(dir: &PathBuf) -> Result<Vec<DiscoveredPlugin>> {
         }
     }
 
-    debug!("Discovered {} plugins in {}", discovered.len(), dir.display());
+    debug!(
+        "Discovered {} plugins in {}",
+        discovered.len(),
+        dir.display()
+    );
     Ok(discovered)
 }
 
@@ -783,7 +793,11 @@ struct PluginManifest {
 /// Load plugin manifest from JSON file
 fn load_plugin_manifest(path: &PathBuf) -> Result<PluginManifest> {
     let content = std::fs::read_to_string(path).map_err(|e| {
-        RuneError::config(format!("Failed to read plugin manifest {}: {}", path.display(), e))
+        RuneError::config(format!(
+            "Failed to read plugin manifest {}: {}",
+            path.display(),
+            e
+        ))
     })?;
 
     let manifest: PluginManifest = serde_json::from_str(&content).map_err(|e| {
@@ -882,7 +896,7 @@ async fn interactive_config_validation(args: &Args) -> Result<()> {
         match plugin.validate() {
             Ok(()) => {
                 println!("✅");
-                
+
                 // Check for potential issues
                 if plugin.dependencies.contains(&plugin.name) {
                     plugin_warnings.push(format!(
@@ -959,7 +973,10 @@ async fn interactive_config_validation(args: &Args) -> Result<()> {
             match scan_plugin_directory(plugins_dir) {
                 Ok(discovered) => {
                     all_discovered.extend(discovered);
-                    println!("✅ Scanned custom plugin directory: {}", plugins_dir.display());
+                    println!(
+                        "✅ Scanned custom plugin directory: {}",
+                        plugins_dir.display()
+                    );
                 }
                 Err(e) => {
                     println!("⚠️  Failed to scan plugin directory: {}", e);
@@ -975,7 +992,11 @@ async fn interactive_config_validation(args: &Args) -> Result<()> {
                         println!("✅ Scanned default directory: {}", default_dir.display());
                     }
                     Err(e) => {
-                        debug!("Failed to scan default directory {}: {}", default_dir.display(), e);
+                        debug!(
+                            "Failed to scan default directory {}: {}",
+                            default_dir.display(),
+                            e
+                        );
                     }
                 }
             }
@@ -986,8 +1007,9 @@ async fn interactive_config_validation(args: &Args) -> Result<()> {
             for discovered in &all_discovered {
                 let is_configured = config.plugins.iter().any(|p| p.name == discovered.name);
                 if !is_configured {
-                    println!("   📦 {} ({:?}) - {}", 
-                        discovered.name, 
+                    println!(
+                        "   📦 {} ({:?}) - {}",
+                        discovered.name,
                         discovered.plugin_type,
                         discovered.path.display()
                     );
@@ -1004,8 +1026,11 @@ async fn interactive_config_validation(args: &Args) -> Result<()> {
     if total_errors == 0 {
         println!("✅ Configuration is valid!");
         println!("   {} plugins configured", config.plugins.len());
-        println!("   {} plugins enabled", config.plugins.iter().filter(|p| p.enabled).count());
-        
+        println!(
+            "   {} plugins enabled",
+            config.plugins.iter().filter(|p| p.enabled).count()
+        );
+
         if total_warnings > 0 {
             println!("   {} warnings (non-critical)", total_warnings);
         }
@@ -1014,42 +1039,53 @@ async fn interactive_config_validation(args: &Args) -> Result<()> {
         if total_warnings > 0 {
             println!("   {} warnings", total_warnings);
         }
-        return Err(RuneError::config("Configuration validation failed".to_string()));
+        return Err(RuneError::config(
+            "Configuration validation failed".to_string(),
+        ));
     }
 
     Ok(())
 }
 
 /// Start configuration file hot-reloading for development mode
-async fn start_config_hot_reload(config_path: PathBuf, _config: std::sync::Arc<Config>) -> Result<()> {
+async fn start_config_hot_reload(
+    config_path: PathBuf,
+    _config: std::sync::Arc<Config>,
+) -> Result<()> {
     use std::time::Duration;
-    
-    info!("🔄 Starting configuration hot-reload for: {}", config_path.display());
-    
+
+    info!(
+        "🔄 Starting configuration hot-reload for: {}",
+        config_path.display()
+    );
+
     let path_clone = config_path.clone();
-    
+
     tokio::spawn(async move {
         let mut last_modified = std::fs::metadata(&path_clone)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        
+
         let mut interval = tokio::time::interval(Duration::from_secs(2));
-        
+
         loop {
             interval.tick().await;
-            
+
             if let Ok(metadata) = std::fs::metadata(&path_clone) {
                 if let Ok(modified) = metadata.modified() {
                     if modified > last_modified {
                         last_modified = modified;
-                        
+
                         info!("🔄 Configuration file changed, reloading...");
-                        
+
                         match Config::from_file(&path_clone) {
                             Ok(new_config) => {
                                 info!("✅ Configuration reloaded successfully");
                                 // In a real implementation, we would update the running config
-                                debug!("New config loaded with {} plugins", new_config.plugins.len());
+                                debug!(
+                                    "New config loaded with {} plugins",
+                                    new_config.plugins.len()
+                                );
                             }
                             Err(e) => {
                                 error!("❌ Failed to reload configuration: {}", e);
@@ -1060,48 +1096,56 @@ async fn start_config_hot_reload(config_path: PathBuf, _config: std::sync::Arc<C
             }
         }
     });
-    
+
     Ok(())
 }
 
 /// Start plugin directory watching for development mode
 async fn start_plugin_directory_watch(plugins_dir: PathBuf) -> Result<()> {
     use std::time::Duration;
-    
-    info!("👀 Starting plugin directory watch: {}", plugins_dir.display());
-    
+
+    info!(
+        "👀 Starting plugin directory watch: {}",
+        plugins_dir.display()
+    );
+
     tokio::spawn(async move {
         let mut last_scan = std::time::SystemTime::UNIX_EPOCH;
         let mut interval = tokio::time::interval(Duration::from_secs(5));
-        
+
         loop {
             interval.tick().await;
-            
+
             if plugins_dir.exists() {
                 match scan_plugin_directory(&plugins_dir) {
                     Ok(discovered) => {
                         let scan_time = std::time::SystemTime::now();
-                        
+
                         // Check if any plugins were added/removed/modified
                         let mut changes_detected = false;
-                        
+
                         for plugin in &discovered {
                             if let Ok(metadata) = std::fs::metadata(&plugin.path) {
                                 if let Ok(modified) = metadata.modified() {
                                     if modified > last_scan {
                                         changes_detected = true;
-                                        info!("🔄 Plugin change detected: {} ({:?})", 
-                                            plugin.name, plugin.plugin_type);
+                                        info!(
+                                            "🔄 Plugin change detected: {} ({:?})",
+                                            plugin.name, plugin.plugin_type
+                                        );
                                     }
                                 }
                             }
                         }
-                        
+
                         if changes_detected {
-                            info!("📦 Plugin directory scan complete: {} plugins found", discovered.len());
+                            info!(
+                                "📦 Plugin directory scan complete: {} plugins found",
+                                discovered.len()
+                            );
                             // In a real implementation, we would trigger plugin reloading here
                         }
-                        
+
                         last_scan = scan_time;
                     }
                     Err(e) => {
@@ -1111,7 +1155,7 @@ async fn start_plugin_directory_watch(plugins_dir: PathBuf) -> Result<()> {
             }
         }
     });
-    
+
     Ok(())
 }
 
@@ -1126,25 +1170,20 @@ async fn main() -> Result<()> {
     } else {
         Level::INFO
     };
-    
+
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(log_level)
         .with_target(args.dev_mode) // Show targets in dev mode
         .with_line_number(args.dev_mode) // Show line numbers in dev mode
         .with_file(args.dev_mode); // Show file names in dev mode
-    
+
     if args.dev_mode {
-        subscriber
-            .with_ansi(true)
-            .pretty()
-            .init();
-        
+        subscriber.with_ansi(true).pretty().init();
+
         info!("🔧 Development mode enabled");
         info!("📊 Enhanced logging active");
     } else {
-        subscriber
-            .with_ansi(true)
-            .init();
+        subscriber.with_ansi(true).init();
     }
 
     // Handle utility commands first
@@ -1220,12 +1259,12 @@ async fn main() -> Result<()> {
         println!("🔧 Development mode enabled");
         println!("🔄 Hot-reloading active");
         println!("📊 Enhanced debugging enabled");
-        
+
         // Start configuration hot-reloading in dev mode
         if let Some(config_file) = &args.config_file {
             start_config_hot_reload(config_file.clone(), engine.config()).await?;
         }
-        
+
         // Start plugin directory watching in dev mode
         if let Some(plugins_dir) = &args.plugins_dir {
             start_plugin_directory_watch(plugins_dir.clone()).await?;
@@ -1240,7 +1279,7 @@ async fn main() -> Result<()> {
     }
 
     println!("📡 WebSocket live reload enabled");
-    
+
     if args.dev_mode {
         println!("\n🔧 Development Features:");
         println!("   • Configuration hot-reload");
@@ -1248,7 +1287,7 @@ async fn main() -> Result<()> {
         println!("   • Enhanced error reporting");
         println!("   • Debug logging enabled");
     }
-    
+
     println!("\n✨ Server ready! Press Ctrl+C to stop.\n");
 
     info!(
