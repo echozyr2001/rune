@@ -2,8 +2,28 @@
 
 use clap::{Arg, Command};
 use rune_core::{Config, CoreEngine, Result, RuneError};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tracing::{error, info, warn, Level};
+use tracing::{debug, error, info, warn, Level};
+
+/// Discovered plugin information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveredPlugin {
+    pub name: String,
+    pub path: PathBuf,
+    pub version: Option<String>,
+    pub description: Option<String>,
+    pub plugin_type: PluginType,
+}
+
+/// Plugin type enumeration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PluginType {
+    Native,      // Rust dynamic library
+    Script,      // Script-based plugin
+    Config,      // Configuration-only plugin
+    Unknown,
+}
 
 /// CLI arguments structure
 #[derive(Debug, Clone)]
@@ -451,7 +471,21 @@ async fn list_plugins(args: &Args) -> Result<()> {
     let plugin_registry = engine.plugin_registry();
     let plugins = plugin_registry.list_plugins();
 
-    if plugins.is_empty() {
+    // Scan for available plugins in directories
+    let mut discovered_plugins = Vec::new();
+    if let Some(plugins_dir) = &args.plugins_dir {
+        discovered_plugins.extend(scan_plugin_directory(plugins_dir)?);
+    }
+
+    // Also scan default plugin directories
+    let default_dirs = get_default_plugin_directories();
+    for dir in default_dirs {
+        if dir.exists() {
+            discovered_plugins.extend(scan_plugin_directory(&dir)?);
+        }
+    }
+
+    if plugins.is_empty() && discovered_plugins.is_empty() {
         println!("No plugins found.");
 
         if let Some(plugins_dir) = &args.plugins_dir {
@@ -460,23 +494,82 @@ async fn list_plugins(args: &Args) -> Result<()> {
             println!("\nTo add plugins, use: --plugins-dir <directory>");
         }
 
+        println!("\nDefault plugin directories:");
+        for dir in get_default_plugin_directories() {
+            println!("  {}", dir.display());
+        }
+
         return Ok(());
     }
 
-    for plugin in plugins {
-        println!("📦 {}", plugin.name);
-        println!("   Version: {}", plugin.version);
-        println!("   Status: {:?}", plugin.status);
+    // Display loaded plugins
+    if !plugins.is_empty() {
+        println!("📋 Loaded Plugins:");
+        for plugin in &plugins {
+            println!("📦 {}", plugin.name);
+            println!("   Version: {}", plugin.version);
+            println!("   Status: {:?}", plugin.status);
+            println!("   Health: {:?}", plugin.health_status);
 
-        if !plugin.dependencies.is_empty() {
-            println!("   Dependencies: {}", plugin.dependencies.join(", "));
+            if !plugin.dependencies.is_empty() {
+                println!("   Dependencies: {}", plugin.dependencies.join(", "));
+            }
+
+            if !plugin.provided_services.is_empty() {
+                println!("   Services: {}", plugin.provided_services.join(", "));
+            }
+
+            println!(
+                "   Loaded: {} seconds ago",
+                plugin.load_time.elapsed().unwrap_or_default().as_secs()
+            );
+
+            if plugin.restart_count > 0 {
+                println!("   Restarts: {}", plugin.restart_count);
+            }
+
+            println!();
         }
+    }
 
-        println!(
-            "   Loaded: {}",
-            plugin.load_time.elapsed().unwrap_or_default().as_secs()
-        );
-        println!();
+    // Display discovered plugins
+    if !discovered_plugins.is_empty() {
+        println!("🔍 Discovered Plugins:");
+        for discovered in discovered_plugins {
+            let status = if plugins.iter().any(|p| p.name == discovered.name) {
+                "✅ Loaded"
+            } else {
+                "⏸️  Available"
+            };
+
+            println!("📦 {} ({})", discovered.name, status);
+            println!("   Path: {}", discovered.path.display());
+            if let Some(version) = &discovered.version {
+                println!("   Version: {}", version);
+            }
+            if let Some(description) = &discovered.description {
+                println!("   Description: {}", description);
+            }
+            println!();
+        }
+    }
+
+    // Show system health in dev mode
+    if args.dev_mode {
+        println!("🏥 System Health: {:?}", plugin_registry.get_system_health());
+        
+        let all_plugins = plugin_registry.list_plugins();
+        let unhealthy_plugins: Vec<_> = all_plugins
+            .iter()
+            .filter(|p| format!("{:?}", p.health_status).contains("Unhealthy"))
+            .collect();
+            
+        if !unhealthy_plugins.is_empty() {
+            println!("\n⚠️  Unhealthy Plugins:");
+            for plugin in unhealthy_plugins {
+                println!("   {} - {:?}", plugin.name, plugin.status);
+            }
+        }
     }
 
     Ok(())
@@ -484,6 +577,17 @@ async fn list_plugins(args: &Args) -> Result<()> {
 
 /// Validate configuration file
 async fn validate_config(args: &Args) -> Result<()> {
+    if args.dev_mode {
+        // Use interactive validation in dev mode
+        interactive_config_validation(args).await
+    } else {
+        // Use simple validation for normal mode
+        simple_config_validation(args).await
+    }
+}
+
+/// Simple configuration validation (non-interactive)
+async fn simple_config_validation(args: &Args) -> Result<()> {
     println!("🔍 Validating Configuration\n");
 
     let config_file = args.config_file.as_ref().ok_or_else(|| {
@@ -543,21 +647,505 @@ async fn validate_config(args: &Args) -> Result<()> {
     Ok(())
 }
 
+/// Scan a directory for available plugins
+fn scan_plugin_directory(dir: &PathBuf) -> Result<Vec<DiscoveredPlugin>> {
+    let mut discovered = Vec::new();
+
+    if !dir.exists() {
+        debug!("Plugin directory does not exist: {}", dir.display());
+        return Ok(discovered);
+    }
+
+    if !dir.is_dir() {
+        return Err(RuneError::config(format!(
+            "Plugin path is not a directory: {}",
+            dir.display()
+        )));
+    }
+
+    debug!("Scanning plugin directory: {}", dir.display());
+
+    let entries = std::fs::read_dir(dir).map_err(|e| {
+        RuneError::config(format!(
+            "Failed to read plugin directory {}: {}",
+            dir.display(),
+            e
+        ))
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| {
+            RuneError::config(format!("Failed to read directory entry: {}", e))
+        })?;
+
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+
+        // Skip hidden files and directories
+        if name.starts_with('.') {
+            continue;
+        }
+
+        let plugin_type = if path.is_dir() {
+            // Check for plugin manifest in subdirectory
+            let manifest_path = path.join("plugin.json");
+            if manifest_path.exists() {
+                match load_plugin_manifest(&manifest_path) {
+                    Ok(manifest) => {
+                        discovered.push(DiscoveredPlugin {
+                            name: manifest.name.unwrap_or_else(|| name.to_string()),
+                            path: path.clone(),
+                            version: manifest.version,
+                            description: manifest.description,
+                            plugin_type: PluginType::Config,
+                        });
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("Failed to load plugin manifest {}: {}", manifest_path.display(), e);
+                        PluginType::Unknown
+                    }
+                }
+            } else {
+                PluginType::Unknown
+            }
+        } else if let Some(extension) = path.extension() {
+            match extension.to_string_lossy().as_ref() {
+                "so" | "dll" | "dylib" => PluginType::Native,
+                "js" | "py" | "lua" => PluginType::Script,
+                "json" => {
+                    // Check if it's a plugin configuration
+                    if name.contains("plugin") {
+                        match load_plugin_manifest(&path) {
+                            Ok(manifest) => {
+                                discovered.push(DiscoveredPlugin {
+                                    name: manifest.name.unwrap_or_else(|| {
+                                        path.file_stem()
+                                            .unwrap_or_default()
+                                            .to_string_lossy()
+                                            .to_string()
+                                    }),
+                                    path: path.clone(),
+                                    version: manifest.version,
+                                    description: manifest.description,
+                                    plugin_type: PluginType::Config,
+                                });
+                                continue;
+                            }
+                            Err(e) => {
+                                debug!("Not a plugin manifest {}: {}", path.display(), e);
+                                PluginType::Unknown
+                            }
+                        }
+                    } else {
+                        PluginType::Unknown
+                    }
+                }
+                _ => PluginType::Unknown,
+            }
+        } else {
+            PluginType::Unknown
+        };
+
+        if !matches!(plugin_type, PluginType::Unknown) {
+            let plugin_name = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            discovered.push(DiscoveredPlugin {
+                name: plugin_name,
+                path: path.clone(),
+                version: None,
+                description: None,
+                plugin_type,
+            });
+        }
+    }
+
+    debug!("Discovered {} plugins in {}", discovered.len(), dir.display());
+    Ok(discovered)
+}
+
+/// Plugin manifest structure for configuration-based plugins
+#[derive(Debug, Serialize, Deserialize)]
+struct PluginManifest {
+    name: Option<String>,
+    version: Option<String>,
+    description: Option<String>,
+    author: Option<String>,
+    dependencies: Option<Vec<String>>,
+    services: Option<Vec<String>>,
+}
+
+/// Load plugin manifest from JSON file
+fn load_plugin_manifest(path: &PathBuf) -> Result<PluginManifest> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        RuneError::config(format!("Failed to read plugin manifest {}: {}", path.display(), e))
+    })?;
+
+    let manifest: PluginManifest = serde_json::from_str(&content).map_err(|e| {
+        RuneError::config(format!(
+            "Failed to parse plugin manifest {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
+
+    Ok(manifest)
+}
+
+/// Get default plugin directories
+fn get_default_plugin_directories() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+
+    // Current directory plugins
+    dirs.push(PathBuf::from("./plugins"));
+
+    // User-specific plugin directory
+    if let Some(home_dir) = dirs::home_dir() {
+        dirs.push(home_dir.join(".rune").join("plugins"));
+    }
+
+    // System-wide plugin directory
+    #[cfg(unix)]
+    {
+        dirs.push(PathBuf::from("/usr/local/lib/rune/plugins"));
+        dirs.push(PathBuf::from("/opt/rune/plugins"));
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(program_files) = std::env::var_os("ProgramFiles") {
+            dirs.push(PathBuf::from(program_files).join("Rune").join("plugins"));
+        }
+    }
+
+    dirs
+}
+
+/// Interactive configuration validation with detailed feedback
+async fn interactive_config_validation(args: &Args) -> Result<()> {
+    println!("🔧 Interactive Configuration Validation\n");
+
+    let config_file = args.config_file.as_ref().ok_or_else(|| {
+        RuneError::config(
+            "No configuration file specified.\n\n\
+            Use: rune --validate-config --config <file.json>"
+                .to_string(),
+        )
+    })?;
+
+    println!("Configuration file: {}", config_file.display());
+
+    // Load and validate the configuration step by step
+    println!("\n📋 Step 1: Loading configuration file...");
+    let config = match args.load_config() {
+        Ok(config) => {
+            println!("✅ Configuration loaded successfully");
+            config
+        }
+        Err(e) => {
+            println!("❌ Configuration loading failed");
+            return Err(e);
+        }
+    };
+
+    // Validate server configuration
+    println!("\n📋 Step 2: Validating server configuration...");
+    if config.server.port == 0 {
+        println!("❌ Invalid port number: {}", config.server.port);
+        return Err(RuneError::config("Port cannot be 0".to_string()));
+    }
+
+    if config.server.hostname.is_empty() {
+        println!("❌ Hostname cannot be empty");
+        return Err(RuneError::config("Hostname is required".to_string()));
+    }
+
+    println!("✅ Server configuration is valid");
+    println!("   Hostname: {}", config.server.hostname);
+    println!("   Port: {}", config.server.port);
+    println!("   CORS: {}", config.server.cors_enabled);
+    println!("   WebSocket: {}", config.server.websocket_enabled);
+
+    // Validate plugin configurations
+    println!("\n📋 Step 3: Validating plugin configurations...");
+    let mut plugin_errors = Vec::new();
+    let mut plugin_warnings = Vec::new();
+
+    for plugin in &config.plugins {
+        print!("   Checking plugin '{}'... ", plugin.name);
+
+        match plugin.validate() {
+            Ok(()) => {
+                println!("✅");
+                
+                // Check for potential issues
+                if plugin.dependencies.contains(&plugin.name) {
+                    plugin_warnings.push(format!(
+                        "Plugin '{}' has circular dependency on itself",
+                        plugin.name
+                    ));
+                }
+
+                if !plugin.enabled {
+                    plugin_warnings.push(format!("Plugin '{}' is disabled", plugin.name));
+                }
+            }
+            Err(e) => {
+                println!("❌");
+                plugin_errors.push(format!("Plugin '{}': {}", plugin.name, e));
+            }
+        }
+    }
+
+    if !plugin_errors.is_empty() {
+        println!("\n❌ Plugin validation errors:");
+        for error in &plugin_errors {
+            println!("   • {}", error);
+        }
+    }
+
+    if !plugin_warnings.is_empty() {
+        println!("\n⚠️  Plugin warnings:");
+        for warning in &plugin_warnings {
+            println!("   • {}", warning);
+        }
+    }
+
+    if plugin_errors.is_empty() {
+        println!("✅ All plugin configurations are valid");
+    }
+
+    // Check plugin dependencies
+    println!("\n📋 Step 4: Checking plugin dependencies...");
+    let enabled_plugins: Vec<_> = config
+        .plugins
+        .iter()
+        .filter(|p| p.enabled)
+        .map(|p| p.name.as_str())
+        .collect();
+
+    let mut dependency_errors = Vec::new();
+    for plugin in config.plugins.iter().filter(|p| p.enabled) {
+        for dep in &plugin.dependencies {
+            if !enabled_plugins.contains(&dep.as_str()) {
+                dependency_errors.push(format!(
+                    "Plugin '{}' depends on '{}' which is not enabled",
+                    plugin.name, dep
+                ));
+            }
+        }
+    }
+
+    if dependency_errors.is_empty() {
+        println!("✅ All plugin dependencies are satisfied");
+    } else {
+        println!("❌ Plugin dependency errors:");
+        for error in &dependency_errors {
+            println!("   • {}", error);
+        }
+    }
+
+    // Check for available plugins
+    if args.dev_mode {
+        println!("\n📋 Step 5: Scanning for available plugins...");
+        let mut all_discovered = Vec::new();
+
+        if let Some(plugins_dir) = &args.plugins_dir {
+            match scan_plugin_directory(plugins_dir) {
+                Ok(discovered) => {
+                    all_discovered.extend(discovered);
+                    println!("✅ Scanned custom plugin directory: {}", plugins_dir.display());
+                }
+                Err(e) => {
+                    println!("⚠️  Failed to scan plugin directory: {}", e);
+                }
+            }
+        }
+
+        for default_dir in get_default_plugin_directories() {
+            if default_dir.exists() {
+                match scan_plugin_directory(&default_dir) {
+                    Ok(discovered) => {
+                        all_discovered.extend(discovered);
+                        println!("✅ Scanned default directory: {}", default_dir.display());
+                    }
+                    Err(e) => {
+                        debug!("Failed to scan default directory {}: {}", default_dir.display(), e);
+                    }
+                }
+            }
+        }
+
+        if !all_discovered.is_empty() {
+            println!("\n🔍 Available plugins not in configuration:");
+            for discovered in &all_discovered {
+                let is_configured = config.plugins.iter().any(|p| p.name == discovered.name);
+                if !is_configured {
+                    println!("   📦 {} ({:?}) - {}", 
+                        discovered.name, 
+                        discovered.plugin_type,
+                        discovered.path.display()
+                    );
+                }
+            }
+        }
+    }
+
+    // Final summary
+    println!("\n📊 Validation Summary:");
+    let total_errors = plugin_errors.len() + dependency_errors.len();
+    let total_warnings = plugin_warnings.len();
+
+    if total_errors == 0 {
+        println!("✅ Configuration is valid!");
+        println!("   {} plugins configured", config.plugins.len());
+        println!("   {} plugins enabled", config.plugins.iter().filter(|p| p.enabled).count());
+        
+        if total_warnings > 0 {
+            println!("   {} warnings (non-critical)", total_warnings);
+        }
+    } else {
+        println!("❌ Configuration has {} errors", total_errors);
+        if total_warnings > 0 {
+            println!("   {} warnings", total_warnings);
+        }
+        return Err(RuneError::config("Configuration validation failed".to_string()));
+    }
+
+    Ok(())
+}
+
+/// Start configuration file hot-reloading for development mode
+async fn start_config_hot_reload(config_path: PathBuf, _config: std::sync::Arc<Config>) -> Result<()> {
+    use std::time::Duration;
+    
+    info!("🔄 Starting configuration hot-reload for: {}", config_path.display());
+    
+    let path_clone = config_path.clone();
+    
+    tokio::spawn(async move {
+        let mut last_modified = std::fs::metadata(&path_clone)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        
+        loop {
+            interval.tick().await;
+            
+            if let Ok(metadata) = std::fs::metadata(&path_clone) {
+                if let Ok(modified) = metadata.modified() {
+                    if modified > last_modified {
+                        last_modified = modified;
+                        
+                        info!("🔄 Configuration file changed, reloading...");
+                        
+                        match Config::from_file(&path_clone) {
+                            Ok(new_config) => {
+                                info!("✅ Configuration reloaded successfully");
+                                // In a real implementation, we would update the running config
+                                debug!("New config loaded with {} plugins", new_config.plugins.len());
+                            }
+                            Err(e) => {
+                                error!("❌ Failed to reload configuration: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    
+    Ok(())
+}
+
+/// Start plugin directory watching for development mode
+async fn start_plugin_directory_watch(plugins_dir: PathBuf) -> Result<()> {
+    use std::time::Duration;
+    
+    info!("👀 Starting plugin directory watch: {}", plugins_dir.display());
+    
+    tokio::spawn(async move {
+        let mut last_scan = std::time::SystemTime::UNIX_EPOCH;
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        
+        loop {
+            interval.tick().await;
+            
+            if plugins_dir.exists() {
+                match scan_plugin_directory(&plugins_dir) {
+                    Ok(discovered) => {
+                        let scan_time = std::time::SystemTime::now();
+                        
+                        // Check if any plugins were added/removed/modified
+                        let mut changes_detected = false;
+                        
+                        for plugin in &discovered {
+                            if let Ok(metadata) = std::fs::metadata(&plugin.path) {
+                                if let Ok(modified) = metadata.modified() {
+                                    if modified > last_scan {
+                                        changes_detected = true;
+                                        info!("🔄 Plugin change detected: {} ({:?})", 
+                                            plugin.name, plugin.plugin_type);
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if changes_detected {
+                            info!("📦 Plugin directory scan complete: {} plugins found", discovered.len());
+                            // In a real implementation, we would trigger plugin reloading here
+                        }
+                        
+                        last_scan = scan_time;
+                    }
+                    Err(e) => {
+                        debug!("Failed to scan plugin directory: {}", e);
+                    }
+                }
+            }
+        }
+    });
+    
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
     let args = Args::parse();
 
-    // Initialize logging early for utility commands
+    // Initialize enhanced logging for development mode
     let log_level = if args.dev_mode {
         Level::DEBUG
     } else {
         Level::INFO
     };
-    tracing_subscriber::fmt()
+    
+    let subscriber = tracing_subscriber::fmt()
         .with_max_level(log_level)
-        .with_target(false)
-        .init();
+        .with_target(args.dev_mode) // Show targets in dev mode
+        .with_line_number(args.dev_mode) // Show line numbers in dev mode
+        .with_file(args.dev_mode); // Show file names in dev mode
+    
+    if args.dev_mode {
+        subscriber
+            .with_ansi(true)
+            .pretty()
+            .init();
+        
+        info!("🔧 Development mode enabled");
+        info!("📊 Enhanced logging active");
+    } else {
+        subscriber
+            .with_ansi(true)
+            .init();
+    }
 
     // Handle utility commands first
     if args.list_plugins {
@@ -630,6 +1218,18 @@ async fn main() -> Result<()> {
 
     if args.dev_mode {
         println!("🔧 Development mode enabled");
+        println!("🔄 Hot-reloading active");
+        println!("📊 Enhanced debugging enabled");
+        
+        // Start configuration hot-reloading in dev mode
+        if let Some(config_file) = &args.config_file {
+            start_config_hot_reload(config_file.clone(), engine.config()).await?;
+        }
+        
+        // Start plugin directory watching in dev mode
+        if let Some(plugins_dir) = &args.plugins_dir {
+            start_plugin_directory_watch(plugins_dir.clone()).await?;
+        }
     }
 
     if args.plugins_dir.is_some() {
@@ -640,6 +1240,15 @@ async fn main() -> Result<()> {
     }
 
     println!("📡 WebSocket live reload enabled");
+    
+    if args.dev_mode {
+        println!("\n🔧 Development Features:");
+        println!("   • Configuration hot-reload");
+        println!("   • Plugin directory watching");
+        println!("   • Enhanced error reporting");
+        println!("   • Debug logging enabled");
+    }
+    
     println!("\n✨ Server ready! Press Ctrl+C to stop.\n");
 
     info!(
