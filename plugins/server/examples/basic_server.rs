@@ -10,7 +10,9 @@ use rune_core::{
     state::StateManager,
 };
 use rune_server::{
-    handlers::{LiveReloadHandler, MarkdownHandler, MermaidHandler, RawMarkdownHandler, StaticHandler},
+    handlers::{
+        LiveReloadHandler, MarkdownHandler, MermaidHandler, RawMarkdownHandler, StaticHandler,
+    },
     ServerConfig, ServerPlugin,
 };
 use std::sync::Arc;
@@ -144,7 +146,10 @@ blockquote {
         handler_registry.register_http_handler(raw_handler).await?;
 
         // Register static file handler for assets (images only, like mdserve)
-        let static_handler = Arc::new(StaticHandler::new_image_handler(base_path, "/*path".to_string()));
+        let static_handler = Arc::new(StaticHandler::new_image_handler(
+            base_path,
+            "/*path".to_string(),
+        ));
         handler_registry
             .register_http_handler(static_handler)
             .await?;

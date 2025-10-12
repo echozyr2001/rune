@@ -1,6 +1,8 @@
 //! Concrete handler implementations for the server plugin
 
-use crate::{HttpHandler, HttpRequest, HttpResponse, WebSocketHandler, WebSocketConnection, WebSocketMessage};
+use crate::{
+    HttpHandler, HttpRequest, HttpResponse, WebSocketConnection, WebSocketHandler, WebSocketMessage,
+};
 use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
 use rune_core::{
@@ -9,8 +11,8 @@ use rune_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, RwLock};
@@ -113,7 +115,9 @@ impl HttpHandler for StaticHandler {
 
     async fn handle(&self, request: HttpRequest) -> Result<HttpResponse> {
         // Extract the file path from the request path
-        let requested_path = request.path.strip_prefix(&self.path_pattern)
+        let requested_path = request
+            .path
+            .strip_prefix(&self.path_pattern)
             .unwrap_or(&request.path)
             .trim_start_matches('/');
 
@@ -128,21 +132,30 @@ impl HttpHandler for StaticHandler {
         match file_path.canonicalize() {
             Ok(canonical_path) => {
                 if !canonical_path.starts_with(&self.base_path) {
-                    warn!("Access denied for path outside base directory: {:?}", canonical_path);
+                    warn!(
+                        "Access denied for path outside base directory: {:?}",
+                        canonical_path
+                    );
                     return Ok(HttpResponse::error(StatusCode::FORBIDDEN, "Access denied"));
                 }
 
                 // Check if file extension is allowed
                 if !self.is_allowed_extension(&canonical_path) {
-                    return Ok(HttpResponse::error(StatusCode::FORBIDDEN, "File type not allowed"));
+                    return Ok(HttpResponse::error(
+                        StatusCode::FORBIDDEN,
+                        "File type not allowed",
+                    ));
                 }
 
                 // Try to read and serve the file
                 match fs::read(&canonical_path) {
                     Ok(contents) => {
                         let content_type = self.guess_content_type(&canonical_path);
-                        debug!("Serving static file: {:?} ({})", canonical_path, content_type);
-                        
+                        debug!(
+                            "Serving static file: {:?} ({})",
+                            canonical_path, content_type
+                        );
+
                         Ok(HttpResponse::new(StatusCode::OK)
                             .with_header("content-type", &content_type)
                             .with_body(contents))
@@ -240,24 +253,24 @@ impl MarkdownHandler {
     async fn refresh_if_needed(&self) -> Result<bool> {
         let metadata = fs::metadata(&self.markdown_file)
             .map_err(|e| RuneError::Server(format!("Failed to read file metadata: {}", e)))?;
-        
+
         let current_modified = metadata
             .modified()
             .map_err(|e| RuneError::Server(format!("Failed to get modification time: {}", e)))?;
 
         let mut state = self.cached_state.write().await;
-        
+
         if current_modified > state.last_modified {
             let content = fs::read_to_string(&self.markdown_file)
                 .map_err(|e| RuneError::Server(format!("Failed to read markdown file: {}", e)))?;
-            
+
             let rendered_html = self.render_markdown(&content).await?;
             let content_hash = format!("{:x}", content.len() as u64);
-            
+
             state.last_modified = current_modified;
             state.cached_html = rendered_html;
             state.content_hash = content_hash;
-            
+
             debug!("Refreshed markdown content: {:?}", self.markdown_file);
             Ok(true)
         } else {
@@ -277,10 +290,10 @@ impl MarkdownHandler {
 
             // Render markdown to HTML
             let result = registry.render_content(content, &context).await?;
-            
+
             // Check if we have mermaid diagrams
-            let has_mermaid = result.html.contains(r#"class="language-mermaid""#) || 
-                             result.html.contains(r#"<div class="mermaid""#);
+            let has_mermaid = result.html.contains(r#"class="language-mermaid""#)
+                || result.html.contains(r#"<div class="mermaid""#);
 
             let mermaid_assets = if has_mermaid {
                 r#"<script src="/mermaid.min.js"></script>"#
@@ -289,7 +302,8 @@ impl MarkdownHandler {
             };
 
             // Apply template
-            let final_html = self.template
+            let final_html = self
+                .template
                 .replace("{CONTENT}", &result.html)
                 .replace("<!-- {MERMAID_ASSETS} -->", mermaid_assets);
 
@@ -318,7 +332,8 @@ impl MarkdownHandler {
             ""
         };
 
-        let final_html = self.template
+        let final_html = self
+            .template
             .replace("{CONTENT}", &html_body)
             .replace("<!-- {MERMAID_ASSETS} -->", mermaid_assets);
 
@@ -402,7 +417,10 @@ impl HttpHandler for RawMarkdownHandler {
                 Ok(HttpResponse::text(&content))
             }
             Err(e) => {
-                warn!("Failed to read markdown file {:?}: {}", self.markdown_file, e);
+                warn!(
+                    "Failed to read markdown file {:?}: {}",
+                    self.markdown_file, e
+                );
                 Ok(HttpResponse::error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Failed to read markdown file",
@@ -501,7 +519,7 @@ pub struct LiveReloadHandler {
 impl LiveReloadHandler {
     /// Create a new live reload handler
     pub fn new(path: String) -> Self {
-        Self { 
+        Self {
             path,
             reload_sender: Arc::new(RwLock::new(None)),
         }
@@ -546,8 +564,11 @@ impl WebSocketHandler for LiveReloadHandler {
     }
 
     async fn on_connect(&self, connection: &WebSocketConnection) -> Result<()> {
-        info!("WebSocket client connected: {} from {}", connection.id, connection.remote_addr);
-        
+        info!(
+            "WebSocket client connected: {} from {}",
+            connection.id, connection.remote_addr
+        );
+
         // Send a welcome message
         connection
             .send_json(&serde_json::json!({
@@ -555,22 +576,27 @@ impl WebSocketHandler for LiveReloadHandler {
                 "message": "Connected to live reload server"
             }))
             .await?;
-        
+
         Ok(())
     }
 
-    async fn on_message(&self, connection: &WebSocketConnection, message: WebSocketMessage) -> Result<()> {
+    async fn on_message(
+        &self,
+        connection: &WebSocketConnection,
+        message: WebSocketMessage,
+    ) -> Result<()> {
         match message {
             WebSocketMessage::Text(text) => {
-                debug!("Received WebSocket message from {}: {}", connection.id, text);
-                
+                debug!(
+                    "Received WebSocket message from {}: {}",
+                    connection.id, text
+                );
+
                 // Try to parse as ClientMessage
                 if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
                     match client_msg {
                         ClientMessage::Ping => {
-                            connection
-                                .send_json(&ServerMessage::Pong)
-                                .await?;
+                            connection.send_json(&ServerMessage::Pong).await?;
                         }
                         ClientMessage::RequestRefresh => {
                             debug!("Client {} requested refresh", connection.id);
@@ -584,12 +610,13 @@ impl WebSocketHandler for LiveReloadHandler {
                         if let Some(msg_type) = parsed.get("type").and_then(|t| t.as_str()) {
                             match msg_type {
                                 "ping" => {
-                                    connection
-                                        .send_json(&ServerMessage::Pong)
-                                        .await?;
+                                    connection.send_json(&ServerMessage::Pong).await?;
                                 }
                                 "request_refresh" => {
-                                    debug!("Client {} requested refresh (legacy format)", connection.id);
+                                    debug!(
+                                        "Client {} requested refresh (legacy format)",
+                                        connection.id
+                                    );
                                 }
                                 _ => {
                                     debug!("Unknown message type: {}", msg_type);
@@ -603,18 +630,27 @@ impl WebSocketHandler for LiveReloadHandler {
                 connection.send(WebSocketMessage::Pong(data)).await?;
             }
             WebSocketMessage::Close(reason) => {
-                debug!("WebSocket client {} requested close: {:?}", connection.id, reason);
+                debug!(
+                    "WebSocket client {} requested close: {:?}",
+                    connection.id, reason
+                );
             }
             _ => {
-                debug!("Received other WebSocket message type from {}", connection.id);
+                debug!(
+                    "Received other WebSocket message type from {}",
+                    connection.id
+                );
             }
         }
-        
+
         Ok(())
     }
 
     async fn on_disconnect(&self, connection: &WebSocketConnection) -> Result<()> {
-        info!("WebSocket client disconnected: {} from {}", connection.id, connection.remote_addr);
+        info!(
+            "WebSocket client disconnected: {} from {}",
+            connection.id, connection.remote_addr
+        );
         Ok(())
     }
 
@@ -632,11 +668,8 @@ mod tests {
     #[tokio::test]
     async fn test_static_handler_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let handler = StaticHandler::new(
-            temp_dir.path().to_path_buf(),
-            "/static".to_string(),
-        );
-        
+        let handler = StaticHandler::new(temp_dir.path().to_path_buf(), "/static".to_string());
+
         assert_eq!(handler.path_pattern(), "/static");
         assert_eq!(handler.method(), Method::GET);
         assert_eq!(handler.priority(), 100);
@@ -645,15 +678,13 @@ mod tests {
     #[tokio::test]
     async fn test_static_image_handler_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let handler = StaticHandler::new_image_handler(
-            temp_dir.path().to_path_buf(),
-            "/*path".to_string(),
-        );
-        
+        let handler =
+            StaticHandler::new_image_handler(temp_dir.path().to_path_buf(), "/*path".to_string());
+
         assert_eq!(handler.path_pattern(), "/*path");
         assert_eq!(handler.method(), Method::GET);
         assert_eq!(handler.priority(), 100);
-        
+
         // Should only allow image extensions
         assert!(handler.is_allowed_extension(Path::new("test.png")));
         assert!(handler.is_allowed_extension(Path::new("test.jpg")));
@@ -665,15 +696,14 @@ mod tests {
     async fn test_markdown_handler_creation() {
         let temp_dir = TempDir::new().unwrap();
         let markdown_file = temp_dir.path().join("test.md");
-        
+
         // Create a test markdown file
-        fs::write(&markdown_file, "# Test\n\nThis is a test.").await.unwrap();
-        
-        let handler = MarkdownHandler::new(
-            "/".to_string(),
-            markdown_file,
-        );
-        
+        fs::write(&markdown_file, "# Test\n\nThis is a test.")
+            .await
+            .unwrap();
+
+        let handler = MarkdownHandler::new("/".to_string(), markdown_file);
+
         assert_eq!(handler.path_pattern(), "/");
         assert_eq!(handler.method(), Method::GET);
         assert_eq!(handler.priority(), 10);
@@ -682,7 +712,7 @@ mod tests {
     #[tokio::test]
     async fn test_mermaid_handler_creation() {
         let handler = MermaidHandler::new("/mermaid.min.js".to_string());
-        
+
         assert_eq!(handler.path_pattern(), "/mermaid.min.js");
         assert_eq!(handler.method(), Method::GET);
         assert_eq!(handler.priority(), 5);
@@ -691,7 +721,7 @@ mod tests {
     #[tokio::test]
     async fn test_live_reload_handler_creation() {
         let handler = LiveReloadHandler::new("/ws".to_string());
-        
+
         assert_eq!(handler.path(), "/ws");
         assert_eq!(handler.priority(), 1);
     }
@@ -699,25 +729,31 @@ mod tests {
     #[test]
     fn test_static_handler_content_type_guessing() {
         let temp_dir = TempDir::new().unwrap();
-        let handler = StaticHandler::new(
-            temp_dir.path().to_path_buf(),
-            "/static".to_string(),
+        let handler = StaticHandler::new(temp_dir.path().to_path_buf(), "/static".to_string());
+
+        assert_eq!(
+            handler.guess_content_type(Path::new("test.png")),
+            "image/png"
         );
-        
-        assert_eq!(handler.guess_content_type(Path::new("test.png")), "image/png");
-        assert_eq!(handler.guess_content_type(Path::new("test.css")), "text/css");
-        assert_eq!(handler.guess_content_type(Path::new("test.js")), "application/javascript");
-        assert_eq!(handler.guess_content_type(Path::new("test.unknown")), "application/octet-stream");
+        assert_eq!(
+            handler.guess_content_type(Path::new("test.css")),
+            "text/css"
+        );
+        assert_eq!(
+            handler.guess_content_type(Path::new("test.js")),
+            "application/javascript"
+        );
+        assert_eq!(
+            handler.guess_content_type(Path::new("test.unknown")),
+            "application/octet-stream"
+        );
     }
 
     #[test]
     fn test_static_handler_extension_checking() {
         let temp_dir = TempDir::new().unwrap();
-        let handler = StaticHandler::new(
-            temp_dir.path().to_path_buf(),
-            "/static".to_string(),
-        );
-        
+        let handler = StaticHandler::new(temp_dir.path().to_path_buf(), "/static".to_string());
+
         assert!(handler.is_allowed_extension(Path::new("test.png")));
         assert!(handler.is_allowed_extension(Path::new("test.css")));
         assert!(!handler.is_allowed_extension(Path::new("test.exe")));

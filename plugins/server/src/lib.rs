@@ -7,7 +7,7 @@ pub mod handlers;
 
 use async_trait::async_trait;
 use axum::{
-    extract::{WebSocketUpgrade, FromRequest},
+    extract::{FromRequest, WebSocketUpgrade},
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
     Router,
@@ -18,11 +18,7 @@ use rune_core::{
     plugin::{Plugin, PluginContext, PluginStatus},
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{
     net::TcpListener,
     sync::{broadcast, RwLock},
@@ -69,7 +65,11 @@ pub trait WebSocketHandler: Send + Sync {
     async fn on_connect(&self, connection: &WebSocketConnection) -> Result<()>;
 
     /// Handle incoming WebSocket message
-    async fn on_message(&self, connection: &WebSocketConnection, message: WebSocketMessage) -> Result<()>;
+    async fn on_message(
+        &self,
+        connection: &WebSocketConnection,
+        message: WebSocketMessage,
+    ) -> Result<()>;
 
     /// Handle WebSocket disconnection
     async fn on_disconnect(&self, connection: &WebSocketConnection) -> Result<()>;
@@ -118,7 +118,10 @@ impl HttpResponse {
     /// Set response header
     pub fn with_header(mut self, name: &str, value: &str) -> Self {
         use axum::http::header::{HeaderName, HeaderValue};
-        if let (Ok(name), Ok(value)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
             self.headers.insert(name, value);
         }
         self
@@ -128,7 +131,7 @@ impl HttpResponse {
     pub fn json<T: Serialize>(data: &T) -> Result<Self> {
         let body = serde_json::to_vec(data)
             .map_err(|e| RuneError::Server(format!("JSON serialization failed: {}", e)))?;
-        
+
         Ok(Self::new(StatusCode::OK)
             .with_header("content-type", "application/json")
             .with_body(body))
@@ -230,17 +233,18 @@ impl HandlerRegistry {
     pub async fn register_http_handler(&self, handler: Arc<dyn HttpHandler>) -> Result<()> {
         let path = handler.path_pattern().to_string();
         let method = handler.method().clone();
-        
+
         info!("Registering HTTP handler: {} {}", method, path);
-        
+
         let mut handlers = self.http_handlers.write().await;
         handlers.push(handler);
-        
+
         // Sort by priority (lower numbers first)
         handlers.sort_by_key(|h| h.priority());
-        
+
         // Publish handler registration event
-        if let Err(e) = self.event_bus
+        if let Err(e) = self
+            .event_bus
             .publish_system_event(SystemEvent::server_handler_registered(
                 "http".to_string(),
                 format!("{} {}", method, path),
@@ -249,24 +253,28 @@ impl HandlerRegistry {
         {
             warn!("Failed to publish handler registration event: {}", e);
         }
-        
+
         Ok(())
     }
 
     /// Register a WebSocket handler
-    pub async fn register_websocket_handler(&self, handler: Arc<dyn WebSocketHandler>) -> Result<()> {
+    pub async fn register_websocket_handler(
+        &self,
+        handler: Arc<dyn WebSocketHandler>,
+    ) -> Result<()> {
         let path = handler.path().to_string();
-        
+
         info!("Registering WebSocket handler: {}", path);
-        
+
         let mut handlers = self.websocket_handlers.write().await;
         handlers.push(handler);
-        
+
         // Sort by priority (lower numbers first)
         handlers.sort_by_key(|h| h.priority());
-        
+
         // Publish handler registration event
-        if let Err(e) = self.event_bus
+        if let Err(e) = self
+            .event_bus
             .publish_system_event(SystemEvent::server_handler_registered(
                 "websocket".to_string(),
                 path.clone(),
@@ -275,7 +283,7 @@ impl HandlerRegistry {
         {
             warn!("Failed to publish handler registration event: {}", e);
         }
-        
+
         Ok(())
     }
 
@@ -283,14 +291,15 @@ impl HandlerRegistry {
     pub async fn unregister_http_handler(&self, path: &str, method: &Method) -> Result<()> {
         let mut handlers = self.http_handlers.write().await;
         let initial_len = handlers.len();
-        
+
         handlers.retain(|h| !(h.path_pattern() == path && h.method() == *method));
-        
+
         if handlers.len() < initial_len {
             info!("Unregistered HTTP handler: {} {}", method, path);
-            
+
             // Publish handler unregistration event
-            if let Err(e) = self.event_bus
+            if let Err(e) = self
+                .event_bus
                 .publish_system_event(SystemEvent::server_handler_unregistered(
                     "http".to_string(),
                     format!("{} {}", method, path),
@@ -300,7 +309,7 @@ impl HandlerRegistry {
                 warn!("Failed to publish handler unregistration event: {}", e);
             }
         }
-        
+
         Ok(())
     }
 
@@ -308,14 +317,15 @@ impl HandlerRegistry {
     pub async fn unregister_websocket_handler(&self, path: &str) -> Result<()> {
         let mut handlers = self.websocket_handlers.write().await;
         let initial_len = handlers.len();
-        
+
         handlers.retain(|h| h.path() != path);
-        
+
         if handlers.len() < initial_len {
             info!("Unregistered WebSocket handler: {}", path);
-            
+
             // Publish handler unregistration event
-            if let Err(e) = self.event_bus
+            if let Err(e) = self
+                .event_bus
                 .publish_system_event(SystemEvent::server_handler_unregistered(
                     "websocket".to_string(),
                     path.to_string(),
@@ -325,33 +335,37 @@ impl HandlerRegistry {
                 warn!("Failed to publish handler unregistration event: {}", e);
             }
         }
-        
+
         Ok(())
     }
 
     /// Find HTTP handler for a request
-    pub async fn find_http_handler(&self, path: &str, method: &Method) -> Option<Arc<dyn HttpHandler>> {
+    pub async fn find_http_handler(
+        &self,
+        path: &str,
+        method: &Method,
+    ) -> Option<Arc<dyn HttpHandler>> {
         let handlers = self.http_handlers.read().await;
-        
+
         for handler in handlers.iter() {
             if handler.can_handle(path, method) {
                 return Some(handler.clone());
             }
         }
-        
+
         None
     }
 
     /// Find WebSocket handler for a path
     pub async fn find_websocket_handler(&self, path: &str) -> Option<Arc<dyn WebSocketHandler>> {
         let handlers = self.websocket_handlers.read().await;
-        
+
         for handler in handlers.iter() {
             if handler.path() == path {
                 return Some(handler.clone());
             }
         }
-        
+
         None
     }
 
@@ -360,7 +374,13 @@ impl HandlerRegistry {
         let handlers = self.http_handlers.read().await;
         handlers
             .iter()
-            .map(|h| (h.path_pattern().to_string(), h.method().clone(), h.priority()))
+            .map(|h| {
+                (
+                    h.path_pattern().to_string(),
+                    h.method().clone(),
+                    h.priority(),
+                )
+            })
             .collect()
     }
 
@@ -377,10 +397,10 @@ impl HandlerRegistry {
     pub async fn clear_all_handlers(&self) {
         let mut http_handlers = self.http_handlers.write().await;
         let mut websocket_handlers = self.websocket_handlers.write().await;
-        
+
         http_handlers.clear();
         websocket_handlers.clear();
-        
+
         info!("Cleared all registered handlers");
     }
 }
@@ -452,15 +472,12 @@ impl ServerPlugin {
     /// Build the Axum router with all registered handlers
     async fn build_router(&self, registry: Arc<HandlerRegistry>) -> Router {
         let registry_clone = registry.clone();
-        
+
         // Create a catch-all router that dynamically handles requests
-        let router = Router::new()
-            .fallback(move |req| {
-                let registry = registry_clone.clone();
-                async move {
-                    Self::handle_dynamic_request(req, registry).await
-                }
-            });
+        let router = Router::new().fallback(move |req| {
+            let registry = registry_clone.clone();
+            async move { Self::handle_dynamic_request(req, registry).await }
+        });
 
         // Add CORS if enabled
         if self.config.enable_cors {
@@ -477,10 +494,14 @@ impl ServerPlugin {
     ) -> Response {
         // Check if this is a WebSocket upgrade request
         if req.headers().get("upgrade").and_then(|v| v.to_str().ok()) == Some("websocket") {
-            return Self::handle_websocket_upgrade(req, registry).await.into_response();
+            return Self::handle_websocket_upgrade(req, registry)
+                .await
+                .into_response();
         }
-        
-        Self::handle_http_request(req, registry).await.into_response()
+
+        Self::handle_http_request(req, registry)
+            .await
+            .into_response()
     }
 
     /// Handle WebSocket upgrade request
@@ -489,22 +510,22 @@ impl ServerPlugin {
         registry: Arc<HandlerRegistry>,
     ) -> Response {
         let path = req.uri().path().to_string();
-        
+
         if let Some(_handler) = registry.find_websocket_handler(&path).await {
             // Handle WebSocket upgrade
             let ws_upgrade = WebSocketUpgrade::from_request(req, &()).await;
             match ws_upgrade {
-                Ok(upgrade) => {
-                    upgrade.on_upgrade(move |socket| {
+                Ok(upgrade) => upgrade
+                    .on_upgrade(move |socket| {
                         Self::handle_websocket_connection(socket, registry, path)
-                    }).into_response()
-                }
-                Err(_) => {
-                    HttpResponse::error(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade").into_response()
-                }
+                    })
+                    .into_response(),
+                Err(_) => HttpResponse::error(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade")
+                    .into_response(),
             }
         } else {
-            HttpResponse::error(StatusCode::NOT_FOUND, "WebSocket handler not found").into_response()
+            HttpResponse::error(StatusCode::NOT_FOUND, "WebSocket handler not found")
+                .into_response()
         }
     }
 
@@ -513,7 +534,6 @@ impl ServerPlugin {
         req: axum::extract::Request,
         registry: Arc<HandlerRegistry>,
     ) -> Response {
-
         use std::collections::HashMap;
 
         // Extract request details
@@ -521,7 +541,7 @@ impl ServerPlugin {
         let uri = req.uri().clone();
         let path = uri.path().to_string();
         let headers = req.headers().clone();
-        
+
         // Extract query parameters
         let query_params: HashMap<String, String> = uri
             .query()
@@ -555,10 +575,8 @@ impl ServerPlugin {
                 Ok(response) => response.into_response(),
                 Err(e) => {
                     tracing::error!("Handler error for {} {}: {}", method, path, e);
-                    HttpResponse::error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "Internal server error"
-                    ).into_response()
+                    HttpResponse::error(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+                        .into_response()
                 }
             }
         } else {
@@ -578,10 +596,10 @@ impl ServerPlugin {
 
         // Generate connection ID
         let connection_id = Uuid::new_v4().to_string();
-        
+
         // Create broadcast channel for this connection
         let (tx, _rx) = broadcast::channel::<WebSocketMessage>(16);
-        
+
         // Create WebSocketConnection
         let connection = WebSocketConnection {
             id: connection_id.clone(),
@@ -610,13 +628,15 @@ impl ServerPlugin {
                         WebSocketMessage::Ping(data) => axum::extract::ws::Message::Ping(data),
                         WebSocketMessage::Pong(data) => axum::extract::ws::Message::Pong(data),
                         WebSocketMessage::Close(reason) => {
-                            axum::extract::ws::Message::Close(reason.map(|r| axum::extract::ws::CloseFrame {
-                                code: axum::extract::ws::close_code::NORMAL,
-                                reason: r.into(),
+                            axum::extract::ws::Message::Close(reason.map(|r| {
+                                axum::extract::ws::CloseFrame {
+                                    code: axum::extract::ws::close_code::NORMAL,
+                                    reason: r.into(),
+                                }
                             }))
                         }
                     };
-                    
+
                     if ws_sender.send(ws_msg).await.is_err() {
                         break;
                     }
@@ -700,19 +720,21 @@ impl Plugin for ServerPlugin {
 
         // Create handler registry
         let registry = Arc::new(HandlerRegistry::new(context.event_bus.clone()));
-        
+
         // Store registry in shared resources for other plugins to access
         // Note: We store the Arc directly since HandlerRegistry doesn't implement Clone
-        context.set_shared_resource("server_handler_registry".to_string(), registry.clone()).await?;
-        
+        context
+            .set_shared_resource("server_handler_registry".to_string(), registry.clone())
+            .await?;
+
         self.handler_registry = Some(registry.clone());
 
         // Build and start the server
         let router = self.build_router(registry).await;
         let addr = format!("{}:{}", self.config.hostname, self.config.port);
-        
+
         info!("Starting HTTP server on {}", addr);
-        
+
         let listener = TcpListener::bind(&addr)
             .await
             .map_err(|e| RuneError::Server(format!("Failed to bind to {}: {}", addr, e)))?;
@@ -728,7 +750,8 @@ impl Plugin for ServerPlugin {
         self.status = PluginStatus::Active;
 
         // Publish server started event
-        context.event_bus
+        context
+            .event_bus
             .publish_system_event(SystemEvent::server_started(addr))
             .await?;
 
@@ -744,7 +767,7 @@ impl Plugin for ServerPlugin {
         // Stop the server
         if let Some(handle) = self.server_handle.take() {
             handle.abort();
-            
+
             // Wait a bit for graceful shutdown
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
