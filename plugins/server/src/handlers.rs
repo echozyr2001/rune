@@ -3,10 +3,18 @@
 use crate::{HttpHandler, HttpRequest, HttpResponse, WebSocketHandler, WebSocketConnection, WebSocketMessage};
 use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
-use rune_core::error::Result;
+use rune_core::{
+    error::{Result, RuneError},
+    renderer::{RenderContext, RendererRegistry},
+};
+use serde::{Deserialize, Serialize};
+
 use std::path::{Path, PathBuf};
 use std::fs;
-use tracing::{debug, warn};
+use std::sync::Arc;
+use std::time::SystemTime;
+use tokio::sync::{broadcast, RwLock};
+use tracing::{debug, info, warn};
 
 /// Static file handler for serving files from the filesystem
 pub struct StaticHandler {
@@ -31,6 +39,26 @@ impl StaticHandler {
             "js".to_string(),
             "html".to_string(),
             "txt".to_string(),
+        ];
+
+        Self {
+            base_path,
+            path_pattern,
+            allowed_extensions,
+        }
+    }
+
+    /// Create a new static handler specifically for images (like mdserve)
+    pub fn new_image_handler(base_path: PathBuf, path_pattern: String) -> Self {
+        let allowed_extensions = vec![
+            "png".to_string(),
+            "jpg".to_string(),
+            "jpeg".to_string(),
+            "gif".to_string(),
+            "svg".to_string(),
+            "webp".to_string(),
+            "bmp".to_string(),
+            "ico".to_string(),
         ];
 
         Self {
@@ -141,43 +169,165 @@ impl HttpHandler for StaticHandler {
     }
 }
 
-/// Markdown handler for serving rendered markdown content
+/// Markdown handler for serving rendered markdown content with live reload
 pub struct MarkdownHandler {
     path_pattern: String,
     markdown_file: PathBuf,
+    base_dir: PathBuf,
+    renderer_registry: Option<Arc<RendererRegistry>>,
+    cached_state: Arc<RwLock<CachedMarkdownState>>,
+    template: String,
+}
+
+/// Cached state for markdown rendering
+#[derive(Debug, Clone)]
+struct CachedMarkdownState {
+    last_modified: SystemTime,
+    cached_html: String,
+    content_hash: String,
+}
+
+impl CachedMarkdownState {
+    fn new() -> Self {
+        Self {
+            last_modified: SystemTime::UNIX_EPOCH,
+            cached_html: String::new(),
+            content_hash: String::new(),
+        }
+    }
 }
 
 impl MarkdownHandler {
     /// Create a new markdown handler
     pub fn new(path_pattern: String, markdown_file: PathBuf) -> Self {
+        let base_dir = markdown_file
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf()
+            .canonicalize()
+            .unwrap_or_else(|_| {
+                markdown_file
+                    .parent()
+                    .unwrap_or_else(|| Path::new("."))
+                    .to_path_buf()
+            });
+
+        // Use the template from mdserve
+        let template = include_str!("../../../mdserve/template.html").to_string();
+
         Self {
             path_pattern,
             markdown_file,
+            base_dir,
+            renderer_registry: None,
+            cached_state: Arc::new(RwLock::new(CachedMarkdownState::new())),
+            template,
         }
     }
 
-    /// Render markdown content to HTML
-    fn render_markdown(&self, content: &str) -> Result<String> {
-        // This is a simplified implementation
-        // In a real implementation, this would use the renderer plugin
-        Ok(format!(
-            r#"<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>Markdown Preview</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; }}
-        pre {{ background: #f5f5f5; padding: 1rem; border-radius: 4px; }}
-        code {{ background: #f5f5f5; padding: 0.2rem 0.4rem; border-radius: 2px; }}
-    </style>
-</head>
-<body>
-    <pre>{}</pre>
-</body>
-</html>"#,
-            html_escape::encode_text(content)
-        ))
+    /// Create a new markdown handler with renderer registry
+    pub fn with_renderer_registry(
+        path_pattern: String,
+        markdown_file: PathBuf,
+        renderer_registry: Arc<RendererRegistry>,
+    ) -> Self {
+        let mut handler = Self::new(path_pattern, markdown_file);
+        handler.renderer_registry = Some(renderer_registry);
+        handler
+    }
+
+    /// Check if the markdown file needs to be refreshed
+    async fn refresh_if_needed(&self) -> Result<bool> {
+        let metadata = fs::metadata(&self.markdown_file)
+            .map_err(|e| RuneError::Server(format!("Failed to read file metadata: {}", e)))?;
+        
+        let current_modified = metadata
+            .modified()
+            .map_err(|e| RuneError::Server(format!("Failed to get modification time: {}", e)))?;
+
+        let mut state = self.cached_state.write().await;
+        
+        if current_modified > state.last_modified {
+            let content = fs::read_to_string(&self.markdown_file)
+                .map_err(|e| RuneError::Server(format!("Failed to read markdown file: {}", e)))?;
+            
+            let rendered_html = self.render_markdown(&content).await?;
+            let content_hash = format!("{:x}", content.len() as u64);
+            
+            state.last_modified = current_modified;
+            state.cached_html = rendered_html;
+            state.content_hash = content_hash;
+            
+            debug!("Refreshed markdown content: {:?}", self.markdown_file);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Render markdown content to HTML using the renderer plugin
+    async fn render_markdown(&self, content: &str) -> Result<String> {
+        if let Some(registry) = &self.renderer_registry {
+            // Create render context
+            let context = RenderContext::new(
+                self.markdown_file.clone(),
+                self.base_dir.clone(),
+                "catppuccin-mocha".to_string(), // Default theme
+            );
+
+            // Render markdown to HTML
+            let result = registry.render_content(content, &context).await?;
+            
+            // Check if we have mermaid diagrams
+            let has_mermaid = result.html.contains(r#"class="language-mermaid""#) || 
+                             result.html.contains(r#"<div class="mermaid""#);
+
+            let mermaid_assets = if has_mermaid {
+                r#"<script src="/mermaid.min.js"></script>"#
+            } else {
+                ""
+            };
+
+            // Apply template
+            let final_html = self.template
+                .replace("{CONTENT}", &result.html)
+                .replace("<!-- {MERMAID_ASSETS} -->", mermaid_assets);
+
+            Ok(final_html)
+        } else {
+            // Fallback to simple markdown rendering
+            self.render_markdown_fallback(content)
+        }
+    }
+
+    /// Fallback markdown rendering without renderer plugin
+    fn render_markdown_fallback(&self, content: &str) -> Result<String> {
+        // Create GFM options with HTML rendering enabled
+        let mut options = markdown::Options::gfm();
+        options.compile.allow_dangerous_html = true;
+
+        let html_body = markdown::to_html_with_options(content, &options)
+            .map_err(|e| RuneError::Server(format!("Markdown parsing failed: {}", e)))?;
+
+        // Check if the HTML contains mermaid code blocks
+        let has_mermaid = html_body.contains(r#"class="language-mermaid""#);
+
+        let mermaid_assets = if has_mermaid {
+            r#"<script src="/mermaid.min.js"></script>"#
+        } else {
+            ""
+        };
+
+        let final_html = self.template
+            .replace("{CONTENT}", &html_body)
+            .replace("<!-- {MERMAID_ASSETS} -->", mermaid_assets);
+
+        Ok(final_html)
+    }
+
+    /// Get the base directory for resolving relative paths
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
     }
 }
 
@@ -192,20 +342,26 @@ impl HttpHandler for MarkdownHandler {
     }
 
     async fn handle(&self, _request: HttpRequest) -> Result<HttpResponse> {
-        match fs::read_to_string(&self.markdown_file) {
-            Ok(content) => {
-                let html = self.render_markdown(&content)?;
-                debug!("Serving markdown file: {:?}", self.markdown_file);
-                Ok(HttpResponse::html(&html))
-            }
-            Err(e) => {
-                warn!("Failed to read markdown file {:?}: {}", self.markdown_file, e);
-                Ok(HttpResponse::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to read markdown file",
-                ))
-            }
+        // Refresh content if needed
+        if let Err(e) = self.refresh_if_needed().await {
+            warn!("Failed to refresh markdown content: {}", e);
+            return Ok(HttpResponse::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Error refreshing content: {}", e),
+            ));
         }
+
+        // Get cached content
+        let state = self.cached_state.read().await;
+        if state.cached_html.is_empty() {
+            return Ok(HttpResponse::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "No content available",
+            ));
+        }
+
+        debug!("Serving markdown file: {:?}", self.markdown_file);
+        Ok(HttpResponse::html(&state.cached_html))
     }
 
     fn priority(&self) -> i32 {
@@ -260,15 +416,126 @@ impl HttpHandler for RawMarkdownHandler {
     }
 }
 
+/// Mermaid.js handler for serving the Mermaid JavaScript library
+pub struct MermaidHandler {
+    path_pattern: String,
+    mermaid_js: &'static str,
+    etag: &'static str,
+}
+
+impl MermaidHandler {
+    /// Create a new Mermaid handler
+    pub fn new(path_pattern: String) -> Self {
+        Self {
+            path_pattern,
+            mermaid_js: include_str!("../../../mdserve/mermaid.min.js"),
+            etag: concat!("\"", env!("CARGO_PKG_VERSION"), "\""),
+        }
+    }
+
+    /// Check if the ETag matches the current version
+    fn is_etag_match(&self, request: &HttpRequest) -> bool {
+        if let Some(if_none_match) = request.headers.get("if-none-match") {
+            if let Ok(etags) = if_none_match.to_str() {
+                return etags.split(',').any(|tag| tag.trim() == self.etag);
+            }
+        }
+        false
+    }
+}
+
+#[async_trait]
+impl HttpHandler for MermaidHandler {
+    fn path_pattern(&self) -> &str {
+        &self.path_pattern
+    }
+
+    fn method(&self) -> Method {
+        Method::GET
+    }
+
+    async fn handle(&self, request: HttpRequest) -> Result<HttpResponse> {
+        // Check if client has current version cached
+        if self.is_etag_match(&request) {
+            debug!("Serving Mermaid.js with 304 Not Modified");
+            return Ok(HttpResponse::new(StatusCode::NOT_MODIFIED)
+                .with_header("etag", self.etag)
+                .with_header("cache-control", "public, no-cache"));
+        }
+
+        debug!("Serving Mermaid.js");
+        Ok(HttpResponse::new(StatusCode::OK)
+            .with_header("content-type", "application/javascript")
+            .with_header("etag", self.etag)
+            .with_header("cache-control", "public, no-cache")
+            .with_body(self.mermaid_js.as_bytes()))
+    }
+
+    fn priority(&self) -> i32 {
+        5 // High priority for specific asset
+    }
+}
+
+/// Client message types for WebSocket communication
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type")]
+pub enum ClientMessage {
+    Ping,
+    RequestRefresh,
+}
+
+/// Server message types for WebSocket communication
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type")]
+pub enum ServerMessage {
+    Reload,
+    Pong,
+}
+
 /// WebSocket handler for live reload functionality
 pub struct LiveReloadHandler {
     path: String,
+    reload_sender: Arc<RwLock<Option<broadcast::Sender<ServerMessage>>>>,
 }
 
 impl LiveReloadHandler {
     /// Create a new live reload handler
     pub fn new(path: String) -> Self {
-        Self { path }
+        Self { 
+            path,
+            reload_sender: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    /// Create a new live reload handler with a reload sender
+    pub fn with_reload_sender(path: String, sender: broadcast::Sender<ServerMessage>) -> Self {
+        Self {
+            path,
+            reload_sender: Arc::new(RwLock::new(Some(sender))),
+        }
+    }
+
+    /// Set the reload sender for broadcasting reload messages
+    pub async fn set_reload_sender(&self, sender: broadcast::Sender<ServerMessage>) {
+        let mut reload_sender = self.reload_sender.write().await;
+        *reload_sender = Some(sender);
+    }
+
+    /// Get the reload sender
+    pub async fn get_reload_sender(&self) -> Option<broadcast::Sender<ServerMessage>> {
+        let reload_sender = self.reload_sender.read().await;
+        reload_sender.clone()
+    }
+
+    /// Broadcast a reload message to all connected clients
+    pub async fn broadcast_reload(&self) -> Result<()> {
+        if let Some(sender) = self.get_reload_sender().await {
+            sender
+                .send(ServerMessage::Reload)
+                .map_err(|e| RuneError::Server(format!("Failed to broadcast reload: {}", e)))?;
+            info!("Broadcasted reload message to WebSocket clients");
+        }
+        Ok(())
     }
 }
 
@@ -279,7 +546,7 @@ impl WebSocketHandler for LiveReloadHandler {
     }
 
     async fn on_connect(&self, connection: &WebSocketConnection) -> Result<()> {
-        debug!("WebSocket client connected: {}", connection.id);
+        info!("WebSocket client connected: {} from {}", connection.id, connection.remote_addr);
         
         // Send a welcome message
         connection
@@ -297,23 +564,36 @@ impl WebSocketHandler for LiveReloadHandler {
             WebSocketMessage::Text(text) => {
                 debug!("Received WebSocket message from {}: {}", connection.id, text);
                 
-                // Try to parse as JSON and handle different message types
-                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let Some(msg_type) = parsed.get("type").and_then(|t| t.as_str()) {
-                        match msg_type {
-                            "ping" => {
-                                connection
-                                    .send_json(&serde_json::json!({
-                                        "type": "pong"
-                                    }))
-                                    .await?;
-                            }
-                            "request_refresh" => {
-                                // In a real implementation, this would trigger a content refresh
-                                debug!("Client {} requested refresh", connection.id);
-                            }
-                            _ => {
-                                debug!("Unknown message type: {}", msg_type);
+                // Try to parse as ClientMessage
+                if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
+                    match client_msg {
+                        ClientMessage::Ping => {
+                            connection
+                                .send_json(&ServerMessage::Pong)
+                                .await?;
+                        }
+                        ClientMessage::RequestRefresh => {
+                            debug!("Client {} requested refresh", connection.id);
+                            // In a real implementation, this could trigger a content refresh
+                            // For now, we just acknowledge the request
+                        }
+                    }
+                } else {
+                    // Try to parse as generic JSON for backward compatibility
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(msg_type) = parsed.get("type").and_then(|t| t.as_str()) {
+                            match msg_type {
+                                "ping" => {
+                                    connection
+                                        .send_json(&ServerMessage::Pong)
+                                        .await?;
+                                }
+                                "request_refresh" => {
+                                    debug!("Client {} requested refresh (legacy format)", connection.id);
+                                }
+                                _ => {
+                                    debug!("Unknown message type: {}", msg_type);
+                                }
                             }
                         }
                     }
@@ -322,8 +602,8 @@ impl WebSocketHandler for LiveReloadHandler {
             WebSocketMessage::Ping(data) => {
                 connection.send(WebSocketMessage::Pong(data)).await?;
             }
-            WebSocketMessage::Close(_) => {
-                debug!("WebSocket client {} requested close", connection.id);
+            WebSocketMessage::Close(reason) => {
+                debug!("WebSocket client {} requested close: {:?}", connection.id, reason);
             }
             _ => {
                 debug!("Received other WebSocket message type from {}", connection.id);
@@ -334,7 +614,7 @@ impl WebSocketHandler for LiveReloadHandler {
     }
 
     async fn on_disconnect(&self, connection: &WebSocketConnection) -> Result<()> {
-        debug!("WebSocket client disconnected: {}", connection.id);
+        info!("WebSocket client disconnected: {} from {}", connection.id, connection.remote_addr);
         Ok(())
     }
 
@@ -347,6 +627,7 @@ impl WebSocketHandler for LiveReloadHandler {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use tokio::fs;
 
     #[tokio::test]
     async fn test_static_handler_creation() {
@@ -362,9 +643,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_static_image_handler_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let handler = StaticHandler::new_image_handler(
+            temp_dir.path().to_path_buf(),
+            "/*path".to_string(),
+        );
+        
+        assert_eq!(handler.path_pattern(), "/*path");
+        assert_eq!(handler.method(), Method::GET);
+        assert_eq!(handler.priority(), 100);
+        
+        // Should only allow image extensions
+        assert!(handler.is_allowed_extension(Path::new("test.png")));
+        assert!(handler.is_allowed_extension(Path::new("test.jpg")));
+        assert!(!handler.is_allowed_extension(Path::new("test.css")));
+        assert!(!handler.is_allowed_extension(Path::new("test.js")));
+    }
+
+    #[tokio::test]
     async fn test_markdown_handler_creation() {
         let temp_dir = TempDir::new().unwrap();
         let markdown_file = temp_dir.path().join("test.md");
+        
+        // Create a test markdown file
+        fs::write(&markdown_file, "# Test\n\nThis is a test.").await.unwrap();
         
         let handler = MarkdownHandler::new(
             "/".to_string(),
@@ -374,6 +677,15 @@ mod tests {
         assert_eq!(handler.path_pattern(), "/");
         assert_eq!(handler.method(), Method::GET);
         assert_eq!(handler.priority(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_mermaid_handler_creation() {
+        let handler = MermaidHandler::new("/mermaid.min.js".to_string());
+        
+        assert_eq!(handler.path_pattern(), "/mermaid.min.js");
+        assert_eq!(handler.method(), Method::GET);
+        assert_eq!(handler.priority(), 5);
     }
 
     #[tokio::test]
@@ -410,5 +722,27 @@ mod tests {
         assert!(handler.is_allowed_extension(Path::new("test.css")));
         assert!(!handler.is_allowed_extension(Path::new("test.exe")));
         assert!(!handler.is_allowed_extension(Path::new("test")));
+    }
+
+    #[test]
+    fn test_client_message_serialization() {
+        let ping_msg = ClientMessage::Ping;
+        let json = serde_json::to_string(&ping_msg).unwrap();
+        assert!(json.contains("Ping"));
+
+        let refresh_msg = ClientMessage::RequestRefresh;
+        let json = serde_json::to_string(&refresh_msg).unwrap();
+        assert!(json.contains("RequestRefresh"));
+    }
+
+    #[test]
+    fn test_server_message_serialization() {
+        let reload_msg = ServerMessage::Reload;
+        let json = serde_json::to_string(&reload_msg).unwrap();
+        assert!(json.contains("Reload"));
+
+        let pong_msg = ServerMessage::Pong;
+        let json = serde_json::to_string(&pong_msg).unwrap();
+        assert!(json.contains("Pong"));
     }
 }

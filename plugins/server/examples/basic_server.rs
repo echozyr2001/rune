@@ -10,7 +10,7 @@ use rune_core::{
     state::StateManager,
 };
 use rune_server::{
-    handlers::{LiveReloadHandler, MarkdownHandler, RawMarkdownHandler, StaticHandler},
+    handlers::{LiveReloadHandler, MarkdownHandler, MermaidHandler, RawMarkdownHandler, StaticHandler},
     ServerConfig, ServerPlugin,
 };
 use std::sync::Arc;
@@ -127,7 +127,7 @@ blockquote {
 
     // Get the handler registry from shared resources
     if let Some(handler_registry) = context
-        .get_shared_resource::<rune_server::HandlerRegistry>("server_handler_registry")
+        .get_shared_resource::<Arc<rune_server::HandlerRegistry>>("server_handler_registry")
         .await
     {
         println!("📝 Registering handlers...");
@@ -143,10 +143,16 @@ blockquote {
         let raw_handler = Arc::new(RawMarkdownHandler::new("/raw".to_string(), markdown_file));
         handler_registry.register_http_handler(raw_handler).await?;
 
-        // Register static file handler for assets
-        let static_handler = Arc::new(StaticHandler::new(base_path, "/static".to_string()));
+        // Register static file handler for assets (images only, like mdserve)
+        let static_handler = Arc::new(StaticHandler::new_image_handler(base_path, "/*path".to_string()));
         handler_registry
             .register_http_handler(static_handler)
+            .await?;
+
+        // Register Mermaid.js handler
+        let mermaid_handler = Arc::new(MermaidHandler::new("/mermaid.min.js".to_string()));
+        handler_registry
+            .register_http_handler(mermaid_handler)
             .await?;
 
         // Register WebSocket handler for live reload
@@ -174,7 +180,8 @@ blockquote {
         println!("\n🌐 Server is running at:");
         println!("  📄 Markdown content: http://127.0.0.1:3030/");
         println!("  📝 Raw markdown: http://127.0.0.1:3030/raw");
-        println!("  🎨 CSS file: http://127.0.0.1:3030/static/style.css");
+        println!("  🎨 CSS file: http://127.0.0.1:3030/style.css");
+        println!("  📊 Mermaid.js: http://127.0.0.1:3030/mermaid.min.js");
         println!("  🔌 WebSocket: ws://127.0.0.1:3030/ws");
         println!("\n💡 Try opening these URLs in your browser!");
         println!("   Press Ctrl+C to stop the server");

@@ -7,10 +7,9 @@ pub mod handlers;
 
 use async_trait::async_trait;
 use axum::{
-    extract::WebSocketUpgrade,
+    extract::{WebSocketUpgrade, FromRequest},
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post, put},
     Router,
 };
 use rune_core::{
@@ -29,7 +28,7 @@ use tokio::{
     sync::{broadcast, RwLock},
 };
 use tower_http::cors::CorsLayer;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 /// HTTP handler trait for processing HTTP requests
 #[async_trait]
@@ -201,7 +200,7 @@ impl WebSocketConnection {
 
 /// WebSocket message types
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "type", content = "data")]
 pub enum WebSocketMessage {
     Text(String),
     Binary(Vec<u8>),
@@ -452,74 +451,228 @@ impl ServerPlugin {
 
     /// Build the Axum router with all registered handlers
     async fn build_router(&self, registry: Arc<HandlerRegistry>) -> Router {
-        let mut router = Router::new();
-
-        // Add HTTP handlers
-        let http_handlers = registry.list_http_handlers().await;
-        for (path, method, _priority) in http_handlers {
-            let handler_registry = registry.clone();
-            let route_path = path.clone();
-            
-            let route = match method {
-                Method::GET => get(move |req| Self::handle_http_request(req, handler_registry.clone(), route_path.clone())),
-                Method::POST => post(move |req| Self::handle_http_request(req, handler_registry.clone(), route_path.clone())),
-                Method::PUT => put(move |req| Self::handle_http_request(req, handler_registry.clone(), route_path.clone())),
-                Method::DELETE => delete(move |req| Self::handle_http_request(req, handler_registry.clone(), route_path.clone())),
-                Method::PATCH => patch(move |req| Self::handle_http_request(req, handler_registry.clone(), route_path.clone())),
-                _ => continue, // Skip unsupported methods for now
-            };
-            
-            router = router.route(&path, route);
-        }
-
-        // Add WebSocket handlers
-        let ws_handlers = registry.list_websocket_handlers().await;
-        for (path, _priority) in ws_handlers {
-            let handler_registry = registry.clone();
-            let ws_path = path.clone();
-            
-            router = router.route(
-                &path,
-                get(move |ws: WebSocketUpgrade| {
-                    let registry = handler_registry.clone();
-                    let path = ws_path.clone();
-                    async move {
-                        ws.on_upgrade(move |socket| Self::handle_websocket_connection(socket, registry, path))
-                    }
-                })
-            );
-        }
+        let registry_clone = registry.clone();
+        
+        // Create a catch-all router that dynamically handles requests
+        let router = Router::new()
+            .fallback(move |req| {
+                let registry = registry_clone.clone();
+                async move {
+                    Self::handle_dynamic_request(req, registry).await
+                }
+            });
 
         // Add CORS if enabled
         if self.config.enable_cors {
-            router = router.layer(CorsLayer::permissive());
+            router.layer(CorsLayer::permissive())
+        } else {
+            router
         }
+    }
 
-        router
+    /// Handle dynamic HTTP request (catch-all handler)
+    async fn handle_dynamic_request(
+        req: axum::extract::Request,
+        registry: Arc<HandlerRegistry>,
+    ) -> Response {
+        // Check if this is a WebSocket upgrade request
+        if req.headers().get("upgrade").and_then(|v| v.to_str().ok()) == Some("websocket") {
+            return Self::handle_websocket_upgrade(req, registry).await.into_response();
+        }
+        
+        Self::handle_http_request(req, registry).await.into_response()
+    }
+
+    /// Handle WebSocket upgrade request
+    async fn handle_websocket_upgrade(
+        req: axum::extract::Request,
+        registry: Arc<HandlerRegistry>,
+    ) -> Response {
+        let path = req.uri().path().to_string();
+        
+        if let Some(_handler) = registry.find_websocket_handler(&path).await {
+            // Handle WebSocket upgrade
+            let ws_upgrade = WebSocketUpgrade::from_request(req, &()).await;
+            match ws_upgrade {
+                Ok(upgrade) => {
+                    upgrade.on_upgrade(move |socket| {
+                        Self::handle_websocket_connection(socket, registry, path)
+                    }).into_response()
+                }
+                Err(_) => {
+                    HttpResponse::error(StatusCode::BAD_REQUEST, "Invalid WebSocket upgrade").into_response()
+                }
+            }
+        } else {
+            HttpResponse::error(StatusCode::NOT_FOUND, "WebSocket handler not found").into_response()
+        }
     }
 
     /// Handle HTTP request
     async fn handle_http_request(
-        _req: axum::extract::Request,
-        _registry: Arc<HandlerRegistry>,
-        _path: String,
-    ) -> impl IntoResponse {
-        // This is a simplified implementation
-        // In a real implementation, we would extract the request details,
-        // find the appropriate handler, and call it
-        HttpResponse::text("Handler not implemented yet")
+        req: axum::extract::Request,
+        registry: Arc<HandlerRegistry>,
+    ) -> Response {
+
+        use std::collections::HashMap;
+
+        // Extract request details
+        let method = req.method().clone();
+        let uri = req.uri().clone();
+        let path = uri.path().to_string();
+        let headers = req.headers().clone();
+        
+        // Extract query parameters
+        let query_params: HashMap<String, String> = uri
+            .query()
+            .map(|q| {
+                url::form_urlencoded::parse(q.as_bytes())
+                    .into_owned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Extract body
+        let (_parts, body) = req.into_parts();
+        let body_bytes = match axum::body::to_bytes(body, usize::MAX).await {
+            Ok(bytes) => bytes.to_vec(),
+            Err(_) => Vec::new(),
+        };
+
+        // Create HttpRequest
+        let http_request = HttpRequest {
+            method: method.clone(),
+            path: path.clone(),
+            query_params,
+            headers,
+            body: body_bytes,
+            path_params: HashMap::new(), // TODO: Extract path parameters
+        };
+
+        // Find and call the appropriate handler
+        if let Some(handler) = registry.find_http_handler(&path, &method).await {
+            match handler.handle(http_request).await {
+                Ok(response) => response.into_response(),
+                Err(e) => {
+                    tracing::error!("Handler error for {} {}: {}", method, path, e);
+                    HttpResponse::error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Internal server error"
+                    ).into_response()
+                }
+            }
+        } else {
+            tracing::debug!("No handler found for {} {}", method, path);
+            HttpResponse::error(StatusCode::NOT_FOUND, "Not found").into_response()
+        }
     }
 
     /// Handle WebSocket connection
     async fn handle_websocket_connection(
-        _socket: axum::extract::ws::WebSocket,
-        _registry: Arc<HandlerRegistry>,
-        _path: String,
+        socket: axum::extract::ws::WebSocket,
+        registry: Arc<HandlerRegistry>,
+        path: String,
     ) {
-        // This is a simplified implementation
-        // In a real implementation, we would manage the WebSocket connection,
-        // find the appropriate handler, and call its methods
-        debug!("WebSocket connection established");
+        use futures_util::{SinkExt, StreamExt};
+        use uuid::Uuid;
+
+        // Generate connection ID
+        let connection_id = Uuid::new_v4().to_string();
+        
+        // Create broadcast channel for this connection
+        let (tx, _rx) = broadcast::channel::<WebSocketMessage>(16);
+        
+        // Create WebSocketConnection
+        let connection = WebSocketConnection {
+            id: connection_id.clone(),
+            remote_addr: "127.0.0.1:0".parse().unwrap(), // TODO: Get real remote addr
+            headers: HeaderMap::new(),
+            sender: tx,
+        };
+
+        // Find the WebSocket handler
+        if let Some(handler) = registry.find_websocket_handler(&path).await {
+            // Notify handler of connection
+            if let Err(e) = handler.on_connect(&connection).await {
+                tracing::error!("WebSocket handler on_connect error: {}", e);
+                return;
+            }
+
+            let (mut ws_sender, mut ws_receiver) = socket.split();
+            let mut rx = connection.sender.subscribe();
+
+            // Spawn task to handle outgoing messages
+            let send_task = tokio::spawn(async move {
+                while let Ok(msg) = rx.recv().await {
+                    let ws_msg = match msg {
+                        WebSocketMessage::Text(text) => axum::extract::ws::Message::Text(text),
+                        WebSocketMessage::Binary(data) => axum::extract::ws::Message::Binary(data),
+                        WebSocketMessage::Ping(data) => axum::extract::ws::Message::Ping(data),
+                        WebSocketMessage::Pong(data) => axum::extract::ws::Message::Pong(data),
+                        WebSocketMessage::Close(reason) => {
+                            axum::extract::ws::Message::Close(reason.map(|r| axum::extract::ws::CloseFrame {
+                                code: axum::extract::ws::close_code::NORMAL,
+                                reason: r.into(),
+                            }))
+                        }
+                    };
+                    
+                    if ws_sender.send(ws_msg).await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            // Handle incoming messages
+            while let Some(msg) = ws_receiver.next().await {
+                match msg {
+                    Ok(axum::extract::ws::Message::Text(text)) => {
+                        let ws_msg = WebSocketMessage::Text(text);
+                        if let Err(e) = handler.on_message(&connection, ws_msg).await {
+                            tracing::error!("WebSocket handler on_message error: {}", e);
+                        }
+                    }
+                    Ok(axum::extract::ws::Message::Binary(data)) => {
+                        let ws_msg = WebSocketMessage::Binary(data);
+                        if let Err(e) = handler.on_message(&connection, ws_msg).await {
+                            tracing::error!("WebSocket handler on_message error: {}", e);
+                        }
+                    }
+                    Ok(axum::extract::ws::Message::Ping(data)) => {
+                        let ws_msg = WebSocketMessage::Ping(data);
+                        if let Err(e) = handler.on_message(&connection, ws_msg).await {
+                            tracing::error!("WebSocket handler on_message error: {}", e);
+                        }
+                    }
+                    Ok(axum::extract::ws::Message::Pong(data)) => {
+                        let ws_msg = WebSocketMessage::Pong(data);
+                        if let Err(e) = handler.on_message(&connection, ws_msg).await {
+                            tracing::error!("WebSocket handler on_message error: {}", e);
+                        }
+                    }
+                    Ok(axum::extract::ws::Message::Close(frame)) => {
+                        let reason = frame.map(|f| f.reason.to_string());
+                        let ws_msg = WebSocketMessage::Close(reason);
+                        if let Err(e) = handler.on_message(&connection, ws_msg).await {
+                            tracing::error!("WebSocket handler on_message error: {}", e);
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::error!("WebSocket error: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // Clean up
+            send_task.abort();
+            if let Err(e) = handler.on_disconnect(&connection).await {
+                tracing::error!("WebSocket handler on_disconnect error: {}", e);
+            }
+        } else {
+            tracing::debug!("No WebSocket handler found for path: {}", path);
+        }
     }
 }
 
@@ -549,6 +702,7 @@ impl Plugin for ServerPlugin {
         let registry = Arc::new(HandlerRegistry::new(context.event_bus.clone()));
         
         // Store registry in shared resources for other plugins to access
+        // Note: We store the Arc directly since HandlerRegistry doesn't implement Clone
         context.set_shared_resource("server_handler_registry".to_string(), registry.clone()).await?;
         
         self.handler_registry = Some(registry.clone());
