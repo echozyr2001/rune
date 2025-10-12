@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod event;
 pub mod plugin;
+pub mod renderer;
 pub mod state;
 
 #[cfg(test)]
@@ -26,6 +27,10 @@ pub use event::{
     SystemEvent, SystemEventHandler,
 };
 pub use plugin::{Plugin, PluginContext, PluginInfo, PluginRegistry, PluginStatus};
+pub use renderer::{
+    Asset, AssetType, ContentRenderer, RenderContext, RenderMetadata, RenderResult,
+    RendererRegistry,
+};
 pub use state::{ApplicationState, StateManager};
 
 use std::sync::Arc;
