@@ -297,6 +297,124 @@ impl RendererRegistry {
         Ok(result)
     }
 
+    /// Render content using a chained pipeline of renderers
+    pub async fn render_with_pipeline(
+        &self,
+        content: &str,
+        context: &RenderContext,
+    ) -> Result<RenderResult> {
+        let pipeline_start = std::time::Instant::now();
+        let mut current_content = content.to_string();
+        let mut current_context = context.clone();
+        let mut combined_assets = Vec::new();
+        let mut combined_metadata = HashMap::new();
+        let mut has_interactive = false;
+        let mut pipeline_renderers = Vec::new();
+
+        // Get all applicable renderers for the pipeline
+        let applicable_renderers = self.get_pipeline_renderers(&context.content_type).await;
+
+        for renderer_name in applicable_renderers {
+            let renderers = self.renderers.read().await;
+            if let Some(renderer) = renderers.get(&renderer_name) {
+                if renderer.can_render(&current_context.content_type) {
+                    let render_result = renderer.render(&current_content, &current_context).await?;
+                    
+                    // Update content for next renderer in pipeline
+                    current_content = render_result.html;
+                    
+                    // Accumulate assets
+                    combined_assets.extend(render_result.assets);
+                    
+                    // Merge metadata
+                    for (key, value) in render_result.metadata.custom_metadata {
+                        combined_metadata.insert(
+                            format!("{}_{}", renderer_name, key),
+                            value,
+                        );
+                    }
+                    
+                    // Track interactive content
+                    if render_result.has_interactive_content {
+                        has_interactive = true;
+                    }
+                    
+                    pipeline_renderers.push(renderer_name.clone());
+                    
+                    // Update context content type if it changed
+                    if current_context.content_type.starts_with("text/markdown") {
+                        current_context.content_type = "text/html".to_string();
+                    }
+                }
+            }
+        }
+
+        let total_time = pipeline_start.elapsed().as_millis() as u64;
+
+        // Create combined metadata
+        let metadata = RendererMetadata {
+            renderer_name: format!("pipeline({})", pipeline_renderers.join("→")),
+            renderer_version: "1.0.0".to_string(),
+            render_time_ms: Some(total_time),
+            content_hash: Some(format!("{:x}", current_content.len() as u64)),
+            custom_metadata: combined_metadata,
+        };
+
+        let mut result = RenderResult::new(current_content)
+            .with_metadata(metadata);
+
+        if has_interactive {
+            result = result.with_interactive_content();
+        }
+
+        // Add all accumulated assets
+        let result = combined_assets.into_iter().fold(result, |acc, asset| acc.with_asset(asset));
+
+        Ok(result)
+    }
+
+    /// Get renderers that should be applied in pipeline order for a content type
+    async fn get_pipeline_renderers(&self, content_type: &str) -> Vec<String> {
+        let renderers = self.renderers.read().await;
+        let pipeline = self.render_pipeline.read().await;
+
+        let mut applicable = Vec::new();
+
+        // For markdown content, we want: markdown → mermaid → any other processors
+        if content_type.starts_with("text/markdown") {
+            // First, find markdown renderer
+            for renderer_name in pipeline.iter() {
+                if let Some(renderer) = renderers.get(renderer_name) {
+                    if renderer.can_render(content_type) && renderer_name.contains("markdown") {
+                        applicable.push(renderer_name.clone());
+                        break;
+                    }
+                }
+            }
+            
+            // Then, find HTML processors (like mermaid)
+            for renderer_name in pipeline.iter() {
+                if let Some(renderer) = renderers.get(renderer_name) {
+                    if renderer.can_render("text/html") && !renderer_name.contains("markdown") {
+                        applicable.push(renderer_name.clone());
+                    }
+                }
+            }
+        } else {
+            // For other content types, just find the first applicable renderer
+            for renderer_name in pipeline.iter() {
+                if let Some(renderer) = renderers.get(renderer_name) {
+                    if renderer.can_render(content_type) {
+                        applicable.push(renderer_name.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
+        applicable
+    }
+
     /// Get all registered renderers
     pub async fn list_renderers(&self) -> Vec<String> {
         let renderers = self.renderers.read().await;
