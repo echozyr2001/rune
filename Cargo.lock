@@ -1277,12 +1277,17 @@ dependencies = [
  "axum",
  "axum-test",
  "futures-util",
+ "html-escape",
  "rune-core",
  "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http",
  "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

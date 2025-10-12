@@ -266,6 +266,23 @@ pub enum SystemEvent {
         severity: ErrorSeverity,
         timestamp: SystemTime,
     },
+    /// Server started
+    ServerStarted {
+        address: String,
+        timestamp: SystemTime,
+    },
+    /// Server handler registered
+    ServerHandlerRegistered {
+        handler_type: String,
+        path: String,
+        timestamp: SystemTime,
+    },
+    /// Server handler unregistered
+    ServerHandlerUnregistered {
+        handler_type: String,
+        path: String,
+        timestamp: SystemTime,
+    },
 }
 
 #[async_trait]
@@ -282,6 +299,9 @@ impl Event for SystemEvent {
             SystemEvent::ThemeChanged { .. } => "theme_changed",
             SystemEvent::RenderComplete { .. } => "render_complete",
             SystemEvent::Error { .. } => "error",
+            SystemEvent::ServerStarted { .. } => "server_started",
+            SystemEvent::ServerHandlerRegistered { .. } => "server_handler_registered",
+            SystemEvent::ServerHandlerUnregistered { .. } => "server_handler_unregistered",
         }
     }
 
@@ -297,6 +317,9 @@ impl Event for SystemEvent {
             SystemEvent::ThemeChanged { timestamp, .. } => *timestamp,
             SystemEvent::RenderComplete { timestamp, .. } => *timestamp,
             SystemEvent::Error { timestamp, .. } => *timestamp,
+            SystemEvent::ServerStarted { timestamp, .. } => *timestamp,
+            SystemEvent::ServerHandlerRegistered { timestamp, .. } => *timestamp,
+            SystemEvent::ServerHandlerUnregistered { timestamp, .. } => *timestamp,
         }
     }
 
@@ -364,6 +387,21 @@ impl Event for SystemEvent {
                 metadata.insert("source".to_string(), source.clone());
                 metadata.insert("message".to_string(), message.clone());
                 metadata.insert("severity".to_string(), format!("{:?}", severity));
+            }
+            SystemEvent::ServerStarted { address, .. } => {
+                metadata.insert("address".to_string(), address.clone());
+            }
+            SystemEvent::ServerHandlerRegistered {
+                handler_type, path, ..
+            } => {
+                metadata.insert("handler_type".to_string(), handler_type.clone());
+                metadata.insert("path".to_string(), path.clone());
+            }
+            SystemEvent::ServerHandlerUnregistered {
+                handler_type, path, ..
+            } => {
+                metadata.insert("handler_type".to_string(), handler_type.clone());
+                metadata.insert("path".to_string(), path.clone());
             }
         }
 
@@ -488,6 +526,32 @@ impl SystemEvent {
         }
     }
 
+    /// Create a new server started event with current timestamp
+    pub fn server_started(address: String) -> Self {
+        Self::ServerStarted {
+            address,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new server handler registered event with current timestamp
+    pub fn server_handler_registered(handler_type: String, path: String) -> Self {
+        Self::ServerHandlerRegistered {
+            handler_type,
+            path,
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new server handler unregistered event with current timestamp
+    pub fn server_handler_unregistered(handler_type: String, path: String) -> Self {
+        Self::ServerHandlerUnregistered {
+            handler_type,
+            path,
+            timestamp: SystemTime::now(),
+        }
+    }
+
     /// Get a human-readable description of the event
     pub fn description(&self) -> String {
         match self {
@@ -542,6 +606,19 @@ impl SystemEvent {
             } => {
                 format!("{:?} error from {}: {}", severity, source, message)
             }
+            SystemEvent::ServerStarted { address, .. } => {
+                format!("Server started on {}", address)
+            }
+            SystemEvent::ServerHandlerRegistered {
+                handler_type, path, ..
+            } => {
+                format!("Server handler registered: {} {}", handler_type, path)
+            }
+            SystemEvent::ServerHandlerUnregistered {
+                handler_type, path, ..
+            } => {
+                format!("Server handler unregistered: {} {}", handler_type, path)
+            }
         }
     }
 
@@ -571,6 +648,16 @@ impl SystemEvent {
                 | SystemEvent::PluginLoaded { .. }
                 | SystemEvent::PluginUnloaded { .. }
                 | SystemEvent::PluginHealthCheck { .. }
+        )
+    }
+
+    /// Check if this is a server event
+    pub fn is_server_event(&self) -> bool {
+        matches!(
+            self,
+            SystemEvent::ServerStarted { .. }
+                | SystemEvent::ServerHandlerRegistered { .. }
+                | SystemEvent::ServerHandlerUnregistered { .. }
         )
     }
 }
