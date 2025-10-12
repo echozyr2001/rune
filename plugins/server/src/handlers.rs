@@ -213,7 +213,7 @@ impl MarkdownHandler {
             });
 
         // Use the template from mdserve
-        let template = include_str!("../../../mdserve/template.html").to_string();
+        let template = include_str!("../../../template.html").to_string();
 
         Self {
             path_pattern,
@@ -428,7 +428,7 @@ impl MermaidHandler {
     pub fn new(path_pattern: String) -> Self {
         Self {
             path_pattern,
-            mermaid_js: include_str!("../../../mdserve/mermaid.min.js"),
+            mermaid_js: include_str!("../../../mermaid.min.js"),
             etag: concat!("\"", env!("CARGO_PKG_VERSION"), "\""),
         }
     }
