@@ -6,12 +6,10 @@ use rune_core::{
     RenderMetadata, RenderResult, RendererRegistry, Result, RuneError,
 };
 
+use regex::Regex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use regex::Regex;
-
-
 
 /// Markdown content renderer implementation
 pub struct MarkdownRenderer {
@@ -70,8 +68,7 @@ impl MarkdownRenderer {
             custom_metadata,
         };
 
-        let result = RenderResult::new(html_body)
-            .with_metadata(metadata);
+        let result = RenderResult::new(html_body).with_metadata(metadata);
 
         Ok(result)
     }
@@ -175,12 +172,13 @@ impl MermaidRenderer {
         let start_time = Instant::now();
 
         // Look for mermaid code blocks in the HTML - handle multiline content with dotall flag
-        let mermaid_regex = Regex::new(r#"(?s)<pre><code class="language-mermaid">(.*?)</code></pre>"#)
-            .map_err(|e| RuneError::Plugin(format!("Regex compilation failed: {}", e)))?;
+        let mermaid_regex =
+            Regex::new(r#"(?s)<pre><code class="language-mermaid">(.*?)</code></pre>"#)
+                .map_err(|e| RuneError::Plugin(format!("Regex compilation failed: {}", e)))?;
 
         let mut has_mermaid = false;
         let mut diagram_count = 0;
-        
+
         let processed_html = mermaid_regex.replace_all(content, |caps: &regex::Captures| {
             has_mermaid = true;
             diagram_count += 1;
@@ -206,7 +204,7 @@ impl MermaidRenderer {
                 "mermaid_diagrams_count".to_string(),
                 serde_json::Value::Number(diagram_count.into()),
             );
-            
+
             custom_metadata.insert(
                 "mermaid_processed".to_string(),
                 serde_json::Value::Bool(true),
@@ -221,15 +219,16 @@ impl MermaidRenderer {
             custom_metadata,
         };
 
-        let mut result = RenderResult::new(processed_html.to_string())
-            .with_metadata(metadata);
+        let mut result = RenderResult::new(processed_html.to_string()).with_metadata(metadata);
 
         if has_mermaid {
             result = result.with_interactive_content();
         }
 
         // Add all assets
-        let result = assets.into_iter().fold(result, |acc, asset| acc.with_asset(asset));
+        let result = assets
+            .into_iter()
+            .fold(result, |acc, asset| acc.with_asset(asset));
 
         Ok(result)
     }

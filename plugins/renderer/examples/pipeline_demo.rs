@@ -109,10 +109,16 @@ The pipeline should process markdown first, then Mermaid diagrams.
         Ok(result) => {
             println!("✅ Pipeline rendering successful!");
             println!("Renderer chain: {}", result.metadata.renderer_name);
-            println!("Total render time: {}ms", result.metadata.render_time_ms.unwrap_or(0));
-            println!("Has interactive content: {}", result.has_interactive_content);
+            println!(
+                "Total render time: {}ms",
+                result.metadata.render_time_ms.unwrap_or(0)
+            );
+            println!(
+                "Has interactive content: {}",
+                result.has_interactive_content
+            );
             println!("Assets required: {}", result.assets.len());
-            
+
             for asset in &result.assets {
                 println!("  📦 {:?}: {}", asset.asset_type, asset.url);
             }
@@ -138,14 +144,16 @@ The pipeline should process markdown first, then Mermaid diagrams.
             if result.html.contains("<h1>") {
                 println!("  ✅ Contains markdown headers");
             }
-            if result.html.contains("<pre><code class=\"language-javascript\">") {
+            if result
+                .html
+                .contains("<pre><code class=\"language-javascript\">")
+            {
                 println!("  ✅ Contains regular code blocks");
             }
 
             // Save output for inspection
             std::fs::write("pipeline_output.html", &result.html)?;
             println!("\n💾 Full HTML output saved to 'pipeline_output.html'");
-
         }
         Err(e) => {
             eprintln!("❌ Pipeline rendering failed: {}", e);
@@ -157,14 +165,17 @@ The pipeline should process markdown first, then Mermaid diagrams.
     match registry.render_content(test_content, &context).await {
         Ok(result) => {
             println!("Single renderer: {}", result.metadata.renderer_name);
-            println!("Render time: {}ms", result.metadata.render_time_ms.unwrap_or(0));
+            println!(
+                "Render time: {}ms",
+                result.metadata.render_time_ms.unwrap_or(0)
+            );
             println!("Has interactive: {}", result.has_interactive_content);
             println!("Assets: {}", result.assets.len());
-            
+
             // This should only process markdown, not mermaid
             let mermaid_code_blocks = result.html.matches(r#"class="language-mermaid""#).count();
             let mermaid_divs = result.html.matches(r#"<div class="mermaid">"#).count();
-            
+
             println!("Mermaid code blocks (unprocessed): {}", mermaid_code_blocks);
             println!("Mermaid divs (processed): {}", mermaid_divs);
         }

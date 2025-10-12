@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Register the mermaid renderer
     let mermaid_renderer = Box::new(MermaidRenderer::new());
     registry.register_renderer(mermaid_renderer).await?;
-    
+
     println!("Registry setup complete!");
 
     // Create a render context
@@ -83,11 +83,17 @@ sequenceDiagram
     match registry.render_content(markdown_content, &context).await {
         Ok(result) => {
             println!("Single renderer result:");
-            println!("Renderer: {} v{}", result.metadata.renderer_name, result.metadata.renderer_version);
+            println!(
+                "Renderer: {} v{}",
+                result.metadata.renderer_name, result.metadata.renderer_version
+            );
             if let Some(time) = result.metadata.render_time_ms {
                 println!("Render time: {}ms", time);
             }
-            println!("Has interactive content: {}", result.has_interactive_content);
+            println!(
+                "Has interactive content: {}",
+                result.has_interactive_content
+            );
             println!("Assets required: {}", result.assets.len());
             for asset in &result.assets {
                 println!("  - {:?}: {}", asset.asset_type, asset.url);
@@ -100,19 +106,28 @@ sequenceDiagram
 
     println!("\n=== Pipeline Renderer Test ===");
     // Test pipeline rendering
-    match registry.render_with_pipeline(markdown_content, &context).await {
+    match registry
+        .render_with_pipeline(markdown_content, &context)
+        .await
+    {
         Ok(result) => {
             println!("Pipeline renderer result:");
-            println!("Renderer: {} v{}", result.metadata.renderer_name, result.metadata.renderer_version);
+            println!(
+                "Renderer: {} v{}",
+                result.metadata.renderer_name, result.metadata.renderer_version
+            );
             if let Some(time) = result.metadata.render_time_ms {
                 println!("Render time: {}ms", time);
             }
-            println!("Has interactive content: {}", result.has_interactive_content);
+            println!(
+                "Has interactive content: {}",
+                result.has_interactive_content
+            );
             println!("Assets required: {}", result.assets.len());
             for asset in &result.assets {
                 println!("  - {:?}: {}", asset.asset_type, asset.url);
             }
-            
+
             println!("\nCustom metadata:");
             for (key, value) in &result.metadata.custom_metadata {
                 println!("  {}: {}", key, value);

@@ -207,10 +207,10 @@ impl RendererRegistry {
     /// Register a content renderer
     pub async fn register_renderer(&self, renderer: Box<dyn ContentRenderer>) -> Result<()> {
         let name = renderer.name().to_string();
-        
+
         {
             let mut renderers = self.renderers.write().await;
-            
+
             if renderers.contains_key(&name) {
                 return Err(RuneError::Plugin(format!(
                     "Renderer '{}' is already registered",
@@ -220,10 +220,10 @@ impl RendererRegistry {
 
             renderers.insert(name.clone(), renderer);
         } // Drop the write lock here
-        
+
         // Update render pipeline order based on priority
         self.update_pipeline_order().await;
-        
+
         tracing::info!("Registered content renderer: {}", name);
         Ok(())
     }
@@ -234,7 +234,7 @@ impl RendererRegistry {
             let mut renderers = self.renderers.write().await;
             renderers.remove(name).is_some()
         }; // Drop the write lock here
-        
+
         if removed {
             self.update_pipeline_order().await;
             tracing::info!("Unregistered content renderer: {}", name);
@@ -281,9 +281,9 @@ impl RendererRegistry {
             })?;
 
         let renderers = self.renderers.read().await;
-        let renderer = renderers.get(&renderer_name).ok_or_else(|| {
-            RuneError::Plugin(format!("Renderer '{}' not found", renderer_name))
-        })?;
+        let renderer = renderers
+            .get(&renderer_name)
+            .ok_or_else(|| RuneError::Plugin(format!("Renderer '{}' not found", renderer_name)))?;
 
         let start_time = std::time::Instant::now();
         let mut result = renderer.render(content, context).await?;
@@ -319,28 +319,25 @@ impl RendererRegistry {
             if let Some(renderer) = renderers.get(&renderer_name) {
                 if renderer.can_render(&current_context.content_type) {
                     let render_result = renderer.render(&current_content, &current_context).await?;
-                    
+
                     // Update content for next renderer in pipeline
                     current_content = render_result.html;
-                    
+
                     // Accumulate assets
                     combined_assets.extend(render_result.assets);
-                    
+
                     // Merge metadata
                     for (key, value) in render_result.metadata.custom_metadata {
-                        combined_metadata.insert(
-                            format!("{}_{}", renderer_name, key),
-                            value,
-                        );
+                        combined_metadata.insert(format!("{}_{}", renderer_name, key), value);
                     }
-                    
+
                     // Track interactive content
                     if render_result.has_interactive_content {
                         has_interactive = true;
                     }
-                    
+
                     pipeline_renderers.push(renderer_name.clone());
-                    
+
                     // Update context content type if it changed
                     if current_context.content_type.starts_with("text/markdown") {
                         current_context.content_type = "text/html".to_string();
@@ -360,15 +357,16 @@ impl RendererRegistry {
             custom_metadata: combined_metadata,
         };
 
-        let mut result = RenderResult::new(current_content)
-            .with_metadata(metadata);
+        let mut result = RenderResult::new(current_content).with_metadata(metadata);
 
         if has_interactive {
             result = result.with_interactive_content();
         }
 
         // Add all accumulated assets
-        let result = combined_assets.into_iter().fold(result, |acc, asset| acc.with_asset(asset));
+        let result = combined_assets
+            .into_iter()
+            .fold(result, |acc, asset| acc.with_asset(asset));
 
         Ok(result)
     }
@@ -391,7 +389,7 @@ impl RendererRegistry {
                     }
                 }
             }
-            
+
             // Then, find HTML processors (like mermaid)
             for renderer_name in pipeline.iter() {
                 if let Some(renderer) = renderers.get(renderer_name) {
