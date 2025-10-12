@@ -18,6 +18,14 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+html-escape = "0.2"
+markdown = "1.0.0-alpha.20"
+regex = "1.10"
+url = "2.5"
 
 [dev-dependencies]
 axum-test = { workspace = true }
+tempfile = "3.0"
+tracing-subscriber = "0.3"
