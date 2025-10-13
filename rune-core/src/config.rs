@@ -344,6 +344,14 @@ impl PluginConfig {
     }
 }
 
+impl Config {
+    /// Get the template path from configuration or return default
+    pub fn get_template_path(&self) -> Option<PathBuf> {
+        self.get_global_setting::<String>("template_path")
+            .map(PathBuf::from)
+    }
+}
+
 /// System-wide configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemConfig {

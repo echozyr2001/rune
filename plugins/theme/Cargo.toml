@@ -9,8 +9,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 rune-core = { path = "../../rune-core" }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["fs", "sync"] }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
