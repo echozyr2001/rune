@@ -1301,6 +1301,7 @@ dependencies = [
  "async-trait",
  "rune-core",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]

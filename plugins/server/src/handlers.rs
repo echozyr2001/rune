@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use axum::http::{Method, StatusCode};
 use rune_core::{
     error::{Result, RuneError},
+    event::{EventBus, SystemEvent},
     renderer::{RenderContext, RendererRegistry},
 };
 use serde::{Deserialize, Serialize};
@@ -281,15 +282,15 @@ impl MarkdownHandler {
     /// Render markdown content to HTML using the renderer plugin
     async fn render_markdown(&self, content: &str) -> Result<String> {
         if let Some(registry) = &self.renderer_registry {
-            // Create render context
+            // Create render context with theme support
             let context = RenderContext::new(
                 self.markdown_file.clone(),
                 self.base_dir.clone(),
-                "catppuccin-mocha".to_string(), // Default theme
+                "catppuccin-mocha".to_string(), // Default theme - will be overridden by theme-aware renderer
             );
 
-            // Render markdown to HTML
-            let result = registry.render_content(content, &context).await?;
+            // Use the pipeline renderer to apply all transformations including theme
+            let result = registry.render_with_pipeline(content, &context).await?;
 
             // Check if we have mermaid diagrams
             let has_mermaid = result.html.contains(r#"class="language-mermaid""#)
@@ -431,6 +432,452 @@ impl HttpHandler for RawMarkdownHandler {
 
     fn priority(&self) -> i32 {
         10 // Higher priority than static handler
+    }
+}
+
+/// Theme API handler for theme management operations
+pub struct ThemeApiHandler {
+    path_pattern: String,
+    event_bus: Arc<dyn EventBus>,
+}
+
+impl ThemeApiHandler {
+    /// Create a new theme API handler
+    pub fn new(path_pattern: String, event_bus: Arc<dyn EventBus>) -> Self {
+        Self {
+            path_pattern,
+            event_bus,
+        }
+    }
+
+    /// Handle theme switching via POST request
+    async fn handle_theme_switch_post(&self, request: &HttpRequest) -> Result<HttpResponse> {
+        // Parse JSON body to get theme name
+        let body_str = String::from_utf8(request.body.clone())
+            .map_err(|e| RuneError::Server(format!("Invalid UTF-8 in request body: {}", e)))?;
+
+        let theme_request: serde_json::Value = serde_json::from_str(&body_str)
+            .map_err(|e| RuneError::Server(format!("Invalid JSON in request body: {}", e)))?;
+
+        let theme_name = theme_request
+            .get("theme")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| RuneError::Server("Missing 'theme' field in request".to_string()))?;
+
+        // Validate theme name
+        let valid_themes = vec![
+            "light",
+            "dark",
+            "catppuccin-latte",
+            "catppuccin-macchiato",
+            "catppuccin-mocha",
+        ];
+        if !valid_themes.contains(&theme_name) {
+            return Ok(HttpResponse::error(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "Invalid theme: {}. Valid themes: {:?}",
+                    theme_name, valid_themes
+                ),
+            ));
+        }
+
+        // Publish theme change event
+        let theme_event = SystemEvent::theme_changed(theme_name.to_string());
+        self.event_bus
+            .publish_system_event(theme_event)
+            .await
+            .map_err(|e| {
+                RuneError::Server(format!("Failed to publish theme change event: {}", e))
+            })?;
+
+        tracing::info!("Theme switched to: {}", theme_name);
+
+        HttpResponse::json(&serde_json::json!({
+            "status": "success",
+            "theme": theme_name,
+            "message": format!("Theme switched to {}", theme_name)
+        }))
+    }
+}
+
+#[async_trait]
+impl HttpHandler for ThemeApiHandler {
+    fn path_pattern(&self) -> &str {
+        &self.path_pattern
+    }
+
+    fn method(&self) -> Method {
+        Method::POST // Primary method for theme switching
+    }
+
+    async fn handle(&self, request: HttpRequest) -> Result<HttpResponse> {
+        // Handle theme switching
+        self.handle_theme_switch_post(&request).await
+    }
+
+    fn priority(&self) -> i32 {
+        5 // High priority for API endpoints
+    }
+
+    fn can_handle(&self, path: &str, method: &Method) -> bool {
+        path == self.path_pattern && *method == Method::POST
+    }
+}
+
+/// Theme info handler for GET requests to theme API
+#[allow(dead_code)]
+pub struct ThemeInfoHandler {
+    path_pattern: String,
+    event_bus: Arc<dyn EventBus>,
+}
+
+impl ThemeInfoHandler {
+    /// Create a new theme info handler
+    pub fn new(path_pattern: String, event_bus: Arc<dyn EventBus>) -> Self {
+        Self {
+            path_pattern,
+            event_bus,
+        }
+    }
+
+    /// Get current theme information
+    async fn handle_theme_info(&self) -> Result<HttpResponse> {
+        let themes = vec![
+            serde_json::json!({
+                "name": "light",
+                "display_name": "Light",
+                "description": "Classic bright theme",
+                "icon": "☀️",
+                "is_dark": false
+            }),
+            serde_json::json!({
+                "name": "dark",
+                "display_name": "Dark",
+                "description": "Classic dark theme",
+                "icon": "🌙",
+                "is_dark": true
+            }),
+            serde_json::json!({
+                "name": "catppuccin-latte",
+                "display_name": "Catppuccin Latte",
+                "description": "Warm light theme",
+                "icon": "☕",
+                "is_dark": false
+            }),
+            serde_json::json!({
+                "name": "catppuccin-macchiato",
+                "display_name": "Catppuccin Macchiato",
+                "description": "Medium contrast theme",
+                "icon": "🥛",
+                "is_dark": true
+            }),
+            serde_json::json!({
+                "name": "catppuccin-mocha",
+                "display_name": "Catppuccin Mocha",
+                "description": "Dark and cozy theme",
+                "icon": "🐱",
+                "is_dark": true
+            }),
+        ];
+
+        HttpResponse::json(&serde_json::json!({
+            "available_themes": themes,
+            "current_theme": "catppuccin-mocha" // Default theme
+        }))
+    }
+}
+
+#[async_trait]
+impl HttpHandler for ThemeInfoHandler {
+    fn path_pattern(&self) -> &str {
+        &self.path_pattern
+    }
+
+    fn method(&self) -> Method {
+        Method::GET
+    }
+
+    async fn handle(&self, _request: HttpRequest) -> Result<HttpResponse> {
+        self.handle_theme_info().await
+    }
+
+    fn priority(&self) -> i32 {
+        5 // High priority for API endpoints
+    }
+
+    fn can_handle(&self, path: &str, method: &Method) -> bool {
+        path == self.path_pattern && *method == Method::GET
+    }
+}
+
+/// Theme asset handler for serving theme CSS and assets
+pub struct ThemeAssetHandler {
+    path_pattern: String,
+    event_bus: Option<Arc<dyn EventBus>>,
+}
+
+impl ThemeAssetHandler {
+    /// Create a new theme asset handler
+    pub fn new(path_pattern: String) -> Self {
+        Self {
+            path_pattern,
+            event_bus: None,
+        }
+    }
+
+    /// Create a new theme asset handler with event bus
+    pub fn with_event_bus(path_pattern: String, event_bus: Arc<dyn EventBus>) -> Self {
+        Self {
+            path_pattern,
+            event_bus: Some(event_bus),
+        }
+    }
+
+    /// Generate CSS for a specific theme
+    fn generate_theme_css(&self, theme_name: &str) -> Result<String> {
+        let css = match theme_name {
+            "light" => {
+                r#"
+                :root {
+                    --bg-color: #fff;
+                    --text-color: #333;
+                    --border-color: #eaecef;
+                    --border-color-light: #dfe2e5;
+                    --code-bg: #f6f8fa;
+                    --blockquote-color: #6a737d;
+                    --link-color: #0366d6;
+                    --table-header-bg: #f6f8fa;
+                }
+            "#
+            }
+            "dark" => {
+                r#"
+                :root {
+                    --bg-color: #0d1117;
+                    --text-color: #e6edf3;
+                    --border-color: #30363d;
+                    --border-color-light: #21262d;
+                    --code-bg: #161b22;
+                    --blockquote-color: #8b949e;
+                    --link-color: #58a6ff;
+                    --table-header-bg: #161b22;
+                }
+            "#
+            }
+            "catppuccin-latte" => {
+                r#"
+                :root {
+                    --bg-color: #eff1f5;
+                    --text-color: #4c4f69;
+                    --border-color: #bcc0cc;
+                    --border-color-light: #ccd0da;
+                    --code-bg: #e6e9ef;
+                    --blockquote-color: #6c6f85;
+                    --link-color: #1e66f5;
+                    --table-header-bg: #ccd0da;
+                }
+            "#
+            }
+            "catppuccin-macchiato" => {
+                r#"
+                :root {
+                    --bg-color: #24273a;
+                    --text-color: #cad3f5;
+                    --border-color: #494d64;
+                    --border-color-light: #363a4f;
+                    --code-bg: #1e2030;
+                    --blockquote-color: #a5adcb;
+                    --link-color: #8aadf4;
+                    --table-header-bg: #363a4f;
+                }
+            "#
+            }
+            "catppuccin-mocha" => {
+                r#"
+                :root {
+                    --bg-color: #1e1e2e;
+                    --text-color: #cdd6f4;
+                    --border-color: #45475a;
+                    --border-color-light: #313244;
+                    --code-bg: #181825;
+                    --blockquote-color: #a6adc8;
+                    --link-color: #89b4fa;
+                    --table-header-bg: #313244;
+                }
+            "#
+            }
+            _ => return Err(RuneError::Server(format!("Unknown theme: {}", theme_name))),
+        };
+
+        Ok(css.to_string())
+    }
+
+    /// Get theme metadata as JSON
+    fn get_theme_metadata(&self, theme_name: &str) -> Result<String> {
+        let metadata = match theme_name {
+            "light" => serde_json::json!({
+                "name": "light",
+                "display_name": "Light",
+                "description": "Classic bright theme",
+                "author": "Rune",
+                "version": "1.0.0",
+                "icon": "☀️",
+                "preview_colors": ["#fff", "#333", "#0366d6"],
+                "is_dark": false,
+                "mermaid_theme": "default"
+            }),
+            "dark" => serde_json::json!({
+                "name": "dark",
+                "display_name": "Dark",
+                "description": "Classic dark theme",
+                "author": "Rune",
+                "version": "1.0.0",
+                "icon": "🌙",
+                "preview_colors": ["#0d1117", "#e6edf3", "#58a6ff"],
+                "is_dark": true,
+                "mermaid_theme": "dark"
+            }),
+            "catppuccin-latte" => serde_json::json!({
+                "name": "catppuccin-latte",
+                "display_name": "Catppuccin Latte",
+                "description": "Warm light theme",
+                "author": "Rune",
+                "version": "1.0.0",
+                "icon": "☕",
+                "preview_colors": ["#eff1f5", "#4c4f69", "#1e66f5"],
+                "is_dark": false,
+                "mermaid_theme": "default"
+            }),
+            "catppuccin-macchiato" => serde_json::json!({
+                "name": "catppuccin-macchiato",
+                "display_name": "Catppuccin Macchiato",
+                "description": "Medium contrast theme",
+                "author": "Rune",
+                "version": "1.0.0",
+                "icon": "🥛",
+                "preview_colors": ["#24273a", "#cad3f5", "#8aadf4"],
+                "is_dark": true,
+                "mermaid_theme": "dark"
+            }),
+            "catppuccin-mocha" => serde_json::json!({
+                "name": "catppuccin-mocha",
+                "display_name": "Catppuccin Mocha",
+                "description": "Dark and cozy theme",
+                "author": "Rune",
+                "version": "1.0.0",
+                "icon": "🐱",
+                "preview_colors": ["#1e1e2e", "#cdd6f4", "#89b4fa"],
+                "is_dark": true,
+                "mermaid_theme": "dark"
+            }),
+            _ => return Err(RuneError::Server(format!("Unknown theme: {}", theme_name))),
+        };
+
+        serde_json::to_string_pretty(&metadata)
+            .map_err(|e| RuneError::Server(format!("Failed to serialize theme metadata: {}", e)))
+    }
+
+    /// Handle theme switching request
+    async fn handle_theme_switch(&self, theme_name: &str) -> Result<HttpResponse> {
+        // Publish theme change event if event bus is available
+        if let Some(event_bus) = &self.event_bus {
+            let theme_event = SystemEvent::theme_changed(theme_name.to_string());
+            if let Err(e) = event_bus.publish_system_event(theme_event).await {
+                tracing::warn!("Failed to publish theme change event: {}", e);
+            } else {
+                tracing::info!("Published theme change event for: {}", theme_name);
+            }
+        }
+
+        HttpResponse::json(&serde_json::json!({
+            "status": "success",
+            "theme": theme_name,
+            "message": format!("Theme switched to {}", theme_name)
+        }))
+    }
+}
+
+#[async_trait]
+impl HttpHandler for ThemeAssetHandler {
+    fn path_pattern(&self) -> &str {
+        &self.path_pattern
+    }
+
+    fn method(&self) -> Method {
+        Method::GET
+    }
+
+    async fn handle(&self, request: HttpRequest) -> Result<HttpResponse> {
+        // Extract the requested path
+        let path = request
+            .path
+            .strip_prefix(&self.path_pattern)
+            .unwrap_or(&request.path)
+            .trim_start_matches('/');
+
+        if path.is_empty() {
+            // Return list of available themes
+            let themes = vec![
+                "light",
+                "dark",
+                "catppuccin-latte",
+                "catppuccin-macchiato",
+                "catppuccin-mocha",
+            ];
+            return HttpResponse::json(&serde_json::json!({
+                "available_themes": themes
+            }));
+        }
+
+        // Handle different theme asset requests
+        let parts: Vec<&str> = path.split('/').collect();
+
+        match parts.as_slice() {
+            [theme_name, "css"] => {
+                // Serve theme CSS
+                let css = self.generate_theme_css(theme_name)?;
+                debug!("Serving CSS for theme: {}", theme_name);
+                Ok(HttpResponse::new(StatusCode::OK)
+                    .with_header("content-type", "text/css")
+                    .with_header("cache-control", "public, max-age=3600")
+                    .with_body(css.as_bytes()))
+            }
+            [theme_name, "metadata"] => {
+                // Serve theme metadata
+                let metadata = self.get_theme_metadata(theme_name)?;
+                debug!("Serving metadata for theme: {}", theme_name);
+                Ok(HttpResponse::new(StatusCode::OK)
+                    .with_header("content-type", "application/json")
+                    .with_header("cache-control", "public, max-age=3600")
+                    .with_body(metadata.as_bytes()))
+            }
+            [theme_name, "switch"] => {
+                // Handle theme switching
+                self.handle_theme_switch(theme_name).await
+            }
+            [theme_name] => {
+                // Default to serving CSS for the theme
+                let css = self.generate_theme_css(theme_name)?;
+                debug!("Serving default CSS for theme: {}", theme_name);
+                Ok(HttpResponse::new(StatusCode::OK)
+                    .with_header("content-type", "text/css")
+                    .with_header("cache-control", "public, max-age=3600")
+                    .with_body(css.as_bytes()))
+            }
+            _ => Ok(HttpResponse::error(
+                StatusCode::NOT_FOUND,
+                "Theme asset not found",
+            )),
+        }
+    }
+
+    fn priority(&self) -> i32 {
+        5 // High priority for theme assets
+    }
+
+    fn matches_path(&self, path: &str) -> bool {
+        path.starts_with(&self.path_pattern)
     }
 }
 

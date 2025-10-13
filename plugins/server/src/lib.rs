@@ -469,6 +469,35 @@ impl ServerPlugin {
         self.handler_registry.clone()
     }
 
+    /// Register theme asset handlers
+    pub async fn register_theme_handlers(&self, event_bus: Arc<dyn EventBus>) -> Result<()> {
+        if let Some(registry) = &self.handler_registry {
+            // Register theme asset handler
+            let theme_asset_handler = Arc::new(handlers::ThemeAssetHandler::with_event_bus(
+                "/themes".to_string(),
+                event_bus.clone(),
+            ));
+            registry.register_http_handler(theme_asset_handler).await?;
+
+            // Register theme API handler for POST requests
+            let theme_api_handler = Arc::new(handlers::ThemeApiHandler::new(
+                "/api/theme".to_string(),
+                event_bus.clone(),
+            ));
+            registry.register_http_handler(theme_api_handler).await?;
+
+            // Register theme API handler for GET requests (separate handler for different method)
+            let theme_info_handler = Arc::new(handlers::ThemeInfoHandler::new(
+                "/api/theme".to_string(),
+                event_bus,
+            ));
+            registry.register_http_handler(theme_info_handler).await?;
+
+            tracing::info!("Registered theme asset and API handlers");
+        }
+        Ok(())
+    }
+
     /// Build the Axum router with all registered handlers
     async fn build_router(&self, registry: Arc<HandlerRegistry>) -> Router {
         let registry_clone = registry.clone();
@@ -728,6 +757,10 @@ impl Plugin for ServerPlugin {
             .await?;
 
         self.handler_registry = Some(registry.clone());
+
+        // Register theme asset handlers
+        self.register_theme_handlers(context.event_bus.clone())
+            .await?;
 
         // Build and start the server
         let router = self.build_router(registry).await;

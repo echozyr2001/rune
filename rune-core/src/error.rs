@@ -32,6 +32,10 @@ pub enum RuneError {
     #[error("Rendering error: {0}")]
     Rendering(String),
 
+    /// Theme-related errors
+    #[error("Theme error: {0}")]
+    Theme(String),
+
     /// State management errors
     #[error("State error: {0}")]
     State(String),
@@ -80,6 +84,11 @@ impl RuneError {
         Self::Rendering(msg.into())
     }
 
+    /// Create a new theme error
+    pub fn theme<S: Into<String>>(msg: S) -> Self {
+        Self::Theme(msg.into())
+    }
+
     /// Create a new state error
     pub fn state<S: Into<String>>(msg: S) -> Self {
         Self::State(msg.into())
@@ -99,6 +108,7 @@ impl RuneError {
             RuneError::FileSystem(_) => true,
             RuneError::Server(_) => true,
             RuneError::Rendering(_) => true,
+            RuneError::Theme(_) => true,
             RuneError::State(_) => true,
             RuneError::Io(_) => true,
             RuneError::Json(_) => false,
@@ -115,6 +125,7 @@ impl RuneError {
             RuneError::FileSystem(_) => ErrorSeverity::Medium,
             RuneError::Server(_) => ErrorSeverity::High,
             RuneError::Rendering(_) => ErrorSeverity::Low,
+            RuneError::Theme(_) => ErrorSeverity::Low,
             RuneError::State(_) => ErrorSeverity::Medium,
             RuneError::Io(_) => ErrorSeverity::Medium,
             RuneError::Json(_) => ErrorSeverity::Low,
