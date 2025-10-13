@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+#![allow(unused_variables)]
 //! Server plugin for HTTP and WebSocket handling
 //!
 //! This plugin provides a modular web server with pluggable handlers and middleware.
