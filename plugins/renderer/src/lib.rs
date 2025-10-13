@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 use rune_core::{
+    event::{SystemEvent, SystemEventHandler},
     Asset, AssetType, ContentRenderer, Plugin, PluginContext, PluginStatus, RenderContext,
     RenderMetadata, RenderResult, RendererRegistry, Result, RuneError,
 };
@@ -311,6 +312,197 @@ impl ContentRenderer for MermaidRenderer {
     }
 }
 
+/// Theme-aware renderer that integrates with the theme system
+pub struct ThemeAwareRenderer {
+    name: String,
+    version: String,
+    status: PluginStatus,
+    current_theme: Arc<tokio::sync::RwLock<String>>,
+}
+
+impl ThemeAwareRenderer {
+    /// Create a new theme-aware renderer
+    pub fn new() -> Self {
+        Self {
+            name: "theme-aware-renderer".to_string(),
+            version: "0.1.0".to_string(),
+            status: PluginStatus::Loading,
+            current_theme: Arc::new(tokio::sync::RwLock::new("catppuccin-mocha".to_string())),
+        }
+    }
+
+    /// Get the current theme
+    pub async fn get_current_theme(&self) -> String {
+        self.current_theme.read().await.clone()
+    }
+
+    /// Set the current theme
+    pub async fn set_current_theme(&self, theme: String) {
+        let mut current = self.current_theme.write().await;
+        *current = theme;
+    }
+
+    /// Apply theme to rendered content
+    async fn apply_theme_to_content(&self, content: &str, theme: &str) -> Result<String> {
+        // For now, we'll inject theme information as metadata
+        // In a more advanced implementation, this could modify CSS variables or classes
+        let theme_metadata = format!(
+            r#"<meta name="theme" content="{}" data-theme-applied="true">"#,
+            theme
+        );
+
+        // Insert theme metadata into the head section if HTML
+        if content.contains("<head>") {
+            Ok(content.replace("<head>", &format!("<head>\n    {}", theme_metadata)))
+        } else {
+            // For non-HTML content, just return as-is
+            Ok(content.to_string())
+        }
+    }
+}
+
+impl Default for ThemeAwareRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Plugin for ThemeAwareRenderer {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn version(&self) -> &str {
+        &self.version
+    }
+
+    fn dependencies(&self) -> Vec<&str> {
+        vec!["theme"] // Depends on theme plugin
+    }
+
+    async fn initialize(&mut self, context: &PluginContext) -> Result<()> {
+        tracing::info!("Initializing theme-aware renderer plugin");
+
+        // Subscribe to theme change events
+        let theme_handler = Arc::new(ThemeChangeHandler {
+            renderer: Arc::new(tokio::sync::RwLock::new(self.current_theme.clone())),
+        });
+
+        context
+            .event_bus
+            .subscribe_system_events(theme_handler)
+            .await?;
+
+        self.status = PluginStatus::Active;
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        tracing::info!("Shutting down theme-aware renderer plugin");
+        self.status = PluginStatus::Stopped;
+        Ok(())
+    }
+
+    fn status(&self) -> PluginStatus {
+        self.status.clone()
+    }
+
+    fn provided_services(&self) -> Vec<&str> {
+        vec!["theme-aware-rendering"]
+    }
+}
+
+#[async_trait]
+impl ContentRenderer for ThemeAwareRenderer {
+    fn can_render(&self, content_type: &str) -> bool {
+        // Can process any HTML content to apply theme information
+        matches!(content_type, "text/html" | "application/html")
+    }
+
+    async fn render(&self, content: &str, context: &RenderContext) -> Result<RenderResult> {
+        let start_time = Instant::now();
+
+        // Get current theme (prefer context theme over global theme)
+        let theme = if !context.theme.is_empty() {
+            context.theme.clone()
+        } else {
+            self.get_current_theme().await
+        };
+
+        // Apply theme to content
+        let themed_content = self.apply_theme_to_content(content, &theme).await?;
+
+        let mut custom_metadata = HashMap::new();
+        custom_metadata.insert(
+            "applied_theme".to_string(),
+            serde_json::Value::String(theme.clone()),
+        );
+        custom_metadata.insert("theme_applied".to_string(), serde_json::Value::Bool(true));
+
+        let metadata = RenderMetadata {
+            renderer_name: self.name.clone(),
+            renderer_version: self.version.clone(),
+            render_time_ms: Some(start_time.elapsed().as_millis() as u64),
+            content_hash: Some(format!("{:x}", themed_content.len() as u64)),
+            custom_metadata,
+        };
+
+        let result = RenderResult::new(themed_content).with_metadata(metadata);
+
+        Ok(result)
+    }
+
+    fn supported_extensions(&self) -> Vec<&str> {
+        vec!["html", "htm"]
+    }
+
+    fn priority(&self) -> u32 {
+        50 // Medium priority, should run after main rendering but before final processing
+    }
+
+    fn renderer_metadata(&self) -> RenderMetadata {
+        let mut custom_metadata = HashMap::new();
+        custom_metadata.insert(
+            "features".to_string(),
+            serde_json::json!(["theme_integration", "runtime_theme_switching"]),
+        );
+
+        RenderMetadata {
+            renderer_name: self.name.clone(),
+            renderer_version: self.version.clone(),
+            render_time_ms: None,
+            content_hash: None,
+            custom_metadata,
+        }
+    }
+}
+
+/// Event handler for theme change events
+struct ThemeChangeHandler {
+    renderer: Arc<tokio::sync::RwLock<Arc<tokio::sync::RwLock<String>>>>,
+}
+
+#[async_trait]
+impl SystemEventHandler for ThemeChangeHandler {
+    async fn handle_system_event(&self, event: &SystemEvent) -> Result<()> {
+        if let SystemEvent::ThemeChanged { theme_name, .. } = event {
+            tracing::info!("Theme changed to: {}", theme_name);
+
+            let renderer_lock = self.renderer.read().await;
+            let mut current_theme = renderer_lock.write().await;
+            *current_theme = theme_name.clone();
+
+            tracing::debug!("Updated renderer theme to: {}", theme_name);
+        }
+        Ok(())
+    }
+
+    fn handler_name(&self) -> &str {
+        "ThemeChangeHandler"
+    }
+}
+
 /// Main renderer plugin that manages all content renderers
 pub struct RendererPlugin {
     name: String,
@@ -380,10 +572,16 @@ impl Plugin for RendererPlugin {
         let mermaid_renderer = Box::new(MermaidRenderer::new());
         registry.register_renderer(mermaid_renderer).await?;
 
+        // Register theme-aware renderer
+        let theme_aware_renderer = Box::new(ThemeAwareRenderer::new());
+        registry.register_renderer(theme_aware_renderer).await?;
+
         self.registry = Some(registry.clone());
         self.status = PluginStatus::Active;
 
-        tracing::info!("Renderer plugin initialized with markdown and mermaid renderers");
+        tracing::info!(
+            "Renderer plugin initialized with markdown, mermaid, and theme-aware renderers"
+        );
         Ok(())
     }
 
