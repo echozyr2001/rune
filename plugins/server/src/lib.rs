@@ -24,7 +24,7 @@ use tokio::{
     sync::{broadcast, RwLock},
 };
 use tower_http::cors::CorsLayer;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 
 /// HTTP handler trait for processing HTTP requests
 #[async_trait]
@@ -51,12 +51,12 @@ pub trait HttpHandler: Send + Sync {
     /// Check if the path matches this handler's pattern
     fn matches_path(&self, path: &str) -> bool {
         let pattern = self.path_pattern();
-        
+
         // Handle root path specially
         if pattern == "/" {
             return path == "/";
         }
-        
+
         // For other paths, check exact match or prefix match
         path == pattern || path.starts_with(&format!("{}/", pattern))
     }
@@ -484,7 +484,7 @@ impl ServerPlugin {
         if let Some(registry) = &self.handler_registry {
             // Get current file from application state
             let state = context.state_manager.get_state().await;
-            
+
             if let Some(current_file) = state.current_file {
                 self.register_file_handlers(&current_file, context).await?;
             } else {
@@ -495,15 +495,22 @@ impl ServerPlugin {
     }
 
     /// Register handlers for a specific file
-    async fn register_file_handlers(&self, current_file: &std::path::Path, context: &PluginContext) -> Result<()> {
+    async fn register_file_handlers(
+        &self,
+        current_file: &std::path::Path,
+        context: &PluginContext,
+    ) -> Result<()> {
         if let Some(registry) = &self.handler_registry {
-            info!("Registering markdown handler for file: {}", current_file.display());
-            
+            info!(
+                "Registering markdown handler for file: {}",
+                current_file.display()
+            );
+
             // Get renderer registry from shared resources if available
             let renderer_registry = context
                 .get_shared_resource::<rune_core::renderer::RendererRegistry>("renderer_registry")
                 .await;
-            
+
             // Register main markdown handler for root path
             let markdown_handler = if let Some(renderer_registry) = renderer_registry {
                 Arc::new(handlers::MarkdownHandler::with_renderer_registry(
@@ -517,16 +524,16 @@ impl ServerPlugin {
                     current_file.to_path_buf(),
                 ))
             };
-            
+
             registry.register_http_handler(markdown_handler).await?;
-            
+
             // Register raw markdown handler
             let raw_handler = Arc::new(handlers::RawMarkdownHandler::new(
                 "/raw".to_string(),
                 current_file.to_path_buf(),
             ));
             registry.register_http_handler(raw_handler).await?;
-            
+
             // Register static file handler for assets in the same directory
             if let Some(base_dir) = current_file.parent() {
                 let static_handler = Arc::new(handlers::StaticHandler::new(
@@ -534,7 +541,7 @@ impl ServerPlugin {
                     "/assets".to_string(),
                 ));
                 registry.register_http_handler(static_handler).await?;
-                
+
                 // Also register image handler for images in the same directory
                 let image_handler = Arc::new(handlers::StaticHandler::new_image_handler(
                     base_dir.to_path_buf(),
@@ -542,8 +549,11 @@ impl ServerPlugin {
                 ));
                 registry.register_http_handler(image_handler).await?;
             }
-            
-            info!("File handlers registered successfully for: {}", current_file.display());
+
+            info!(
+                "File handlers registered successfully for: {}",
+                current_file.display()
+            );
         }
         Ok(())
     }
@@ -553,23 +563,27 @@ impl ServerPlugin {
         if let Some(registry) = &self.handler_registry {
             // Create a broadcast channel for reload messages
             let (reload_sender, _) = broadcast::channel::<handlers::ServerMessage>(16);
-            
+
             // Register live reload WebSocket handler
             let live_reload_handler = Arc::new(handlers::LiveReloadHandler::with_reload_sender(
                 "/ws".to_string(),
                 reload_sender.clone(),
             ));
-            
-            registry.register_websocket_handler(live_reload_handler.clone()).await?;
-            
+
+            registry
+                .register_websocket_handler(live_reload_handler.clone())
+                .await?;
+
             // Create and register a file change event handler that will trigger reloads
             let reload_event_handler = Arc::new(LiveReloadEventHandler {
                 reload_sender,
                 live_reload_handler,
             });
-            
-            event_bus.subscribe_system_events(reload_event_handler).await?;
-            
+
+            event_bus
+                .subscribe_system_events(reload_event_handler)
+                .await?;
+
             info!("WebSocket handlers registered successfully");
         }
         Ok(())
@@ -829,7 +843,6 @@ impl ServerPlugin {
             tracing::debug!("No WebSocket handler found for path: {}", path);
         }
     }
-
 }
 
 #[async_trait]
@@ -873,36 +886,45 @@ impl Plugin for ServerPlugin {
             handler_registry: registry.clone(),
             simple_monitor_starter: monitor_tx,
         });
-        
-        context.event_bus.subscribe_system_events(server_event_handler).await?;
+
+        context
+            .event_bus
+            .subscribe_system_events(server_event_handler)
+            .await?;
 
         // Spawn a task that waits for the file path and then starts monitoring
         let event_bus = context.event_bus.clone();
         tokio::spawn(async move {
             if let Some(file_path) = monitor_rx.recv().await {
-                info!("Starting simple file monitoring for: {}", file_path.display());
-                
+                info!(
+                    "Starting simple file monitoring for: {}",
+                    file_path.display()
+                );
+
                 let mut last_modified = std::fs::metadata(&file_path)
                     .and_then(|m| m.modified())
                     .unwrap_or_else(|_| std::time::SystemTime::now());
-                
+
                 let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-                
+
                 loop {
                     interval.tick().await;
-                    
+
                     if let Ok(metadata) = std::fs::metadata(&file_path) {
                         if let Ok(modified) = metadata.modified() {
                             if modified > last_modified {
                                 last_modified = modified;
-                                
-                                info!("File changed, publishing reload event: {}", file_path.display());
-                                
+
+                                info!(
+                                    "File changed, publishing reload event: {}",
+                                    file_path.display()
+                                );
+
                                 let change_event = rune_core::event::SystemEvent::file_changed(
                                     file_path.clone(),
                                     rune_core::event::ChangeType::Modified,
                                 );
-                                
+
                                 if let Err(e) = event_bus.publish_system_event(change_event).await {
                                     error!("Failed to publish file change event: {}", e);
                                 }
@@ -1005,9 +1027,15 @@ struct ServerEventHandler {
 impl rune_core::event::SystemEventHandler for ServerEventHandler {
     async fn handle_system_event(&self, event: &rune_core::event::SystemEvent) -> Result<()> {
         match event {
-            rune_core::event::SystemEvent::FileChanged { path, change_type, .. } => {
-                info!("Server received file changed event: {} ({:?})", path.display(), change_type);
-                
+            rune_core::event::SystemEvent::FileChanged {
+                path, change_type, ..
+            } => {
+                info!(
+                    "Server received file changed event: {} ({:?})",
+                    path.display(),
+                    change_type
+                );
+
                 // Try to start the simple monitor. This will only work the first time.
                 // We ignore the error in case the receiver has been dropped.
                 let _ = self.simple_monitor_starter.try_send(path.clone());
@@ -1041,7 +1069,7 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
         match event {
             rune_core::event::SystemEvent::FileChanged { path, .. } => {
                 info!("File changed, triggering live reload: {}", path.display());
-                
+
                 // Broadcast reload message to all connected WebSocket clients
                 if let Err(e) = self.live_reload_handler.broadcast_reload().await {
                     warn!("Failed to broadcast reload message: {}", e);
@@ -1062,13 +1090,17 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
 impl ServerEventHandler {
     /// Register file handlers in response to an event
     async fn register_file_handlers_for_event(&self, file_path: &std::path::Path) -> Result<()> {
-        info!("Registering markdown handler for file: {}", file_path.display());
-        
+        info!(
+            "Registering markdown handler for file: {}",
+            file_path.display()
+        );
+
         // Get renderer registry from shared resources if available
-        let renderer_registry = self.plugin_context
+        let renderer_registry = self
+            .plugin_context
             .get_shared_resource::<rune_core::renderer::RendererRegistry>("renderer_registry")
             .await;
-        
+
         // Register main markdown handler for root path
         let markdown_handler = if let Some(renderer_registry) = renderer_registry {
             Arc::new(handlers::MarkdownHandler::with_renderer_registry(
@@ -1082,33 +1114,44 @@ impl ServerEventHandler {
                 file_path.to_path_buf(),
             ))
         };
-        
-        self.handler_registry.register_http_handler(markdown_handler).await?;
-        
+
+        self.handler_registry
+            .register_http_handler(markdown_handler)
+            .await?;
+
         // Register raw markdown handler
         let raw_handler = Arc::new(handlers::RawMarkdownHandler::new(
             "/raw".to_string(),
             file_path.to_path_buf(),
         ));
-        self.handler_registry.register_http_handler(raw_handler).await?;
-        
+        self.handler_registry
+            .register_http_handler(raw_handler)
+            .await?;
+
         // Register static file handler for assets in the same directory
         if let Some(base_dir) = file_path.parent() {
             let static_handler = Arc::new(handlers::StaticHandler::new(
                 base_dir.to_path_buf(),
                 "/assets".to_string(),
             ));
-            self.handler_registry.register_http_handler(static_handler).await?;
-            
+            self.handler_registry
+                .register_http_handler(static_handler)
+                .await?;
+
             // Also register image handler for images in the same directory
             let image_handler = Arc::new(handlers::StaticHandler::new_image_handler(
                 base_dir.to_path_buf(),
                 "/images".to_string(),
             ));
-            self.handler_registry.register_http_handler(image_handler).await?;
+            self.handler_registry
+                .register_http_handler(image_handler)
+                .await?;
         }
-        
-        info!("File handlers registered successfully for: {}", file_path.display());
+
+        info!(
+            "File handlers registered successfully for: {}",
+            file_path.display()
+        );
         Ok(())
     }
 }
