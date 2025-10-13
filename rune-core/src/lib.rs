@@ -257,6 +257,7 @@ impl CoreEngine {
     }
 
     /// Load plugins specified in configuration
+    #[allow(dead_code)]
     async fn load_configured_plugins(&mut self, _context: &PluginContext) -> Result<()> {
         let enabled_plugins = self.config.get_enabled_plugins();
 
