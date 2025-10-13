@@ -284,17 +284,11 @@ pub enum SystemEvent {
         timestamp: SystemTime,
     },
     /// System shutdown initiated
-    SystemShutdownInitiated {
-        timestamp: SystemTime,
-    },
+    SystemShutdownInitiated { timestamp: SystemTime },
     /// System preparing for shutdown
-    SystemShutdownPreparing {
-        timestamp: SystemTime,
-    },
+    SystemShutdownPreparing { timestamp: SystemTime },
     /// System shutdown completed
-    SystemShutdownComplete {
-        timestamp: SystemTime,
-    },
+    SystemShutdownComplete { timestamp: SystemTime },
 }
 
 #[async_trait]
@@ -667,15 +661,11 @@ impl SystemEvent {
             } => {
                 format!("Server handler unregistered: {} {}", handler_type, path)
             }
-            SystemEvent::SystemShutdownInitiated { .. } => {
-                "System shutdown initiated".to_string()
-            }
+            SystemEvent::SystemShutdownInitiated { .. } => "System shutdown initiated".to_string(),
             SystemEvent::SystemShutdownPreparing { .. } => {
                 "System preparing for shutdown".to_string()
             }
-            SystemEvent::SystemShutdownComplete { .. } => {
-                "System shutdown completed".to_string()
-            }
+            SystemEvent::SystemShutdownComplete { .. } => "System shutdown completed".to_string(),
         }
     }
 

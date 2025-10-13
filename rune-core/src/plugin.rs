@@ -373,7 +373,10 @@ impl PluginRegistry {
         // Handle any remaining plugins that weren't in the shutdown order
         let remaining_plugins: Vec<String> = self.plugins.keys().cloned().collect();
         if !remaining_plugins.is_empty() {
-            warn!("Force shutting down remaining plugins: {:?}", remaining_plugins);
+            warn!(
+                "Force shutting down remaining plugins: {:?}",
+                remaining_plugins
+            );
             for plugin_name in remaining_plugins {
                 if let Some(mut plugin) = self.plugins.remove(&plugin_name) {
                     if let Some(info) = self.plugin_info.get_mut(&plugin_name) {
@@ -388,11 +391,15 @@ impl PluginRegistry {
                         }
                         Ok(Err(e)) => {
                             error!("Force shutdown failed for plugin {}: {}", plugin_name, e);
-                            shutdown_errors.push((plugin_name.clone(), format!("Force shutdown failed: {}", e)));
+                            shutdown_errors.push((
+                                plugin_name.clone(),
+                                format!("Force shutdown failed: {}", e),
+                            ));
                         }
                         Err(_) => {
                             error!("Force shutdown timed out for plugin: {}", plugin_name);
-                            shutdown_errors.push((plugin_name.clone(), "Force shutdown timeout".to_string()));
+                            shutdown_errors
+                                .push((plugin_name.clone(), "Force shutdown timeout".to_string()));
                         }
                     }
                 }
@@ -408,7 +415,10 @@ impl PluginRegistry {
         // Report shutdown results
         let total_plugins = successful_shutdowns + shutdown_errors.len();
         if shutdown_errors.is_empty() {
-            info!("Plugin registry shutdown complete: all {} plugins shutdown successfully", total_plugins);
+            info!(
+                "Plugin registry shutdown complete: all {} plugins shutdown successfully",
+                total_plugins
+            );
         } else {
             warn!(
                 "Plugin registry shutdown complete with errors: {}/{} plugins shutdown successfully",
@@ -420,10 +430,14 @@ impl PluginRegistry {
         }
 
         // Return error if any critical plugins failed to shutdown
-        if shutdown_errors.iter().any(|(name, _)| self.is_critical_plugin_name(name)) {
+        if shutdown_errors
+            .iter()
+            .any(|(name, _)| self.is_critical_plugin_name(name))
+        {
             return Err(crate::error::RuneError::Plugin(format!(
                 "Critical plugins failed to shutdown: {}",
-                shutdown_errors.iter()
+                shutdown_errors
+                    .iter()
                     .filter(|(name, _)| self.is_critical_plugin_name(name))
                     .map(|(name, error)| format!("{}: {}", name, error))
                     .collect::<Vec<_>>()
@@ -477,14 +491,21 @@ impl PluginRegistry {
     /// Notify dependent plugins that a plugin is shutting down
     async fn notify_dependents_of_shutdown(&self, shutting_down_plugin: &str) {
         let dependents = self.dependencies.get_dependents(shutting_down_plugin);
-        
+
         if !dependents.is_empty() {
-            info!("Notifying {} dependent plugins of {} shutdown", dependents.len(), shutting_down_plugin);
-            
+            info!(
+                "Notifying {} dependent plugins of {} shutdown",
+                dependents.len(),
+                shutting_down_plugin
+            );
+
             // In a real implementation, this would send events to dependent plugins
             // For now, we'll just log the notification
             for dependent in dependents {
-                debug!("Would notify plugin {} that {} is shutting down", dependent, shutting_down_plugin);
+                debug!(
+                    "Would notify plugin {} that {} is shutting down",
+                    dependent, shutting_down_plugin
+                );
             }
         }
     }

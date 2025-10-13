@@ -1,6 +1,8 @@
 //! Configuration validation and loading demonstration
 
-use rune_core::{Config, ConfigLoadContext, PluginConfig, RuntimeConfigManager, Result, ServerConfig};
+use rune_core::{
+    Config, ConfigLoadContext, PluginConfig, Result, RuntimeConfigManager, ServerConfig,
+};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -32,7 +34,7 @@ async fn demo_basic_validation() -> Result<()> {
     println!("📋 Demo 1: Basic Configuration Validation");
 
     let config_path = PathBuf::from("rune-core/examples/config/comprehensive-config.json");
-    
+
     if !config_path.exists() {
         println!("⚠️  Configuration file not found, creating default config");
         let config = Config::new_with_validation()?;
@@ -59,10 +61,15 @@ async fn demo_basic_validation() -> Result<()> {
         }
     }
 
-    println!("   Server: {}:{}", config.server.hostname, config.server.port);
-    println!("   Plugins: {} configured, {} enabled", 
-             config.plugins.len(), 
-             config.get_enabled_plugins().len());
+    println!(
+        "   Server: {}:{}",
+        config.server.hostname, config.server.port
+    );
+    println!(
+        "   Plugins: {} configured, {} enabled",
+        config.plugins.len(),
+        config.get_enabled_plugins().len()
+    );
     println!("   Global settings: {}", config.global_settings.len());
     println!();
 
@@ -74,7 +81,7 @@ async fn demo_configuration_overrides() -> Result<()> {
     println!("🔄 Demo 2: Configuration Loading with Overrides");
 
     let base_config_path = PathBuf::from("rune-core/examples/config/main.json");
-    
+
     // Create override configuration
     let override_config = Config {
         server: ServerConfig {
@@ -88,7 +95,10 @@ async fn demo_configuration_overrides() -> Result<()> {
         global_settings: {
             let mut settings = HashMap::new();
             settings.insert("dev_mode".to_string(), serde_json::Value::Bool(true));
-            settings.insert("log_level".to_string(), serde_json::Value::String("debug".to_string()));
+            settings.insert(
+                "log_level".to_string(),
+                serde_json::Value::String("debug".to_string()),
+            );
             settings
         },
     };
@@ -102,9 +112,12 @@ async fn demo_configuration_overrides() -> Result<()> {
     println!("✅ Configuration loaded with overrides");
     println!("   Base config: {}", base_config_path.display());
     println!("   Override config: {}", override_path.display());
-    println!("   Final server: {}:{}", merged_config.server.hostname, merged_config.server.port);
+    println!(
+        "   Final server: {}:{}",
+        merged_config.server.hostname, merged_config.server.port
+    );
     println!("   CORS enabled: {}", merged_config.server.cors_enabled);
-    
+
     if let Some(dev_mode) = merged_config.get_global_setting::<bool>("dev_mode") {
         println!("   Dev mode: {}", dev_mode);
     }
@@ -131,7 +144,10 @@ async fn demo_runtime_management() -> Result<()> {
         },
         cli_overrides: {
             let mut cli = HashMap::new();
-            cli.insert("server.hostname".to_string(), serde_json::Value::String("localhost".to_string()));
+            cli.insert(
+                "server.hostname".to_string(),
+                serde_json::Value::String("localhost".to_string()),
+            );
             cli
         },
         validation_enabled: true,
@@ -148,12 +164,21 @@ async fn demo_runtime_management() -> Result<()> {
 
     // Get current configuration
     let config = manager.get_config();
-    println!("   Current server: {}:{}", config.server.hostname, config.server.port);
+    println!(
+        "   Current server: {}:{}",
+        config.server.hostname, config.server.port
+    );
 
     // Update configuration
     let mut updates = HashMap::new();
-    updates.insert("server.port".to_string(), serde_json::Value::Number(serde_json::Number::from(4000)));
-    updates.insert("global.cache_enabled".to_string(), serde_json::Value::Bool(false));
+    updates.insert(
+        "server.port".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(4000)),
+    );
+    updates.insert(
+        "global.cache_enabled".to_string(),
+        serde_json::Value::Bool(false),
+    );
 
     let diff = manager.update_config(updates)?;
     println!("✅ Configuration updated");
@@ -176,7 +201,7 @@ async fn demo_validation_errors() -> Result<()> {
     let invalid_config = Config {
         server: ServerConfig {
             hostname: "".to_string(), // Invalid: empty hostname
-            port: 0, // Invalid: port 0
+            port: 0,                  // Invalid: port 0
             cors_enabled: true,
             websocket_enabled: true,
             static_dir: None,
@@ -188,7 +213,7 @@ async fn demo_validation_errors() -> Result<()> {
                 version: Some("invalid-version".to_string()), // Invalid: doesn't match semver pattern
                 config: HashMap::new(),
                 dependencies: vec!["self".to_string()], // Invalid: self-dependency (will be caught by name validation)
-                load_order: Some(-1), // Invalid: negative load order
+                load_order: Some(-1),                   // Invalid: negative load order
             },
             PluginConfig {
                 name: "plugin2".to_string(),
@@ -201,8 +226,14 @@ async fn demo_validation_errors() -> Result<()> {
         ],
         global_settings: {
             let mut settings = HashMap::new();
-            settings.insert("log_level".to_string(), serde_json::Value::String("invalid".to_string())); // Invalid: not in allowed values
-            settings.insert("unknown_setting".to_string(), serde_json::Value::String("value".to_string())); // Warning: unknown setting
+            settings.insert(
+                "log_level".to_string(),
+                serde_json::Value::String("invalid".to_string()),
+            ); // Invalid: not in allowed values
+            settings.insert(
+                "unknown_setting".to_string(),
+                serde_json::Value::String("value".to_string()),
+            ); // Warning: unknown setting
             settings
         },
     };
@@ -222,8 +253,11 @@ async fn demo_validation_errors() -> Result<()> {
         Err(_) => {
             // Get detailed validation results
             if let Ok(result) = invalid_config.validate_comprehensive() {
-                println!("❌ Configuration validation failed with {} errors:", result.errors.len());
-                
+                println!(
+                    "❌ Configuration validation failed with {} errors:",
+                    result.errors.len()
+                );
+
                 for error in &result.errors {
                     println!("   Error - {}: {}", error.field_path, error.message);
                     if let Some(fix) = &error.suggested_fix {
