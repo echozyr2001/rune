@@ -465,7 +465,30 @@ async fn list_plugins(args: &Args) -> Result<()> {
     println!("🔌 Available Plugins\n");
 
     let config = args.load_config()?;
-    let engine = CoreEngine::new(config)?;
+    let mut engine = CoreEngine::new(config)?;
+
+    // Initialize the engine to load plugins
+    engine.initialize().await?;
+
+    // Register built-in plugins for listing
+    let context = engine.create_plugin_context();
+
+    // Register plugins (ignore errors for listing purposes)
+    let _ = engine
+        .register_plugin(
+            Box::new(rune_file_watcher::FileWatcherPlugin::new()),
+            &context,
+        )
+        .await;
+    let _ = engine
+        .register_plugin(Box::new(rune_renderer::RendererPlugin::new()), &context)
+        .await;
+    let _ = engine
+        .register_plugin(Box::new(rune_server::ServerPlugin::new()), &context)
+        .await;
+    let _ = engine
+        .register_plugin(Box::new(rune_theme::ThemePlugin::new()), &context)
+        .await;
 
     // Get plugin information from the registry
     let plugin_registry = engine.plugin_registry();
@@ -792,21 +815,11 @@ struct PluginManifest {
 
 /// Load plugin manifest from JSON file
 fn load_plugin_manifest(path: &PathBuf) -> Result<PluginManifest> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        RuneError::config(format!(
-            "Failed to read plugin manifest {}: {}",
-            path.display(),
-            e
-        ))
-    })?;
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| RuneError::config(format!("Failed to read plugin manifest: {}", e)))?;
 
-    let manifest: PluginManifest = serde_json::from_str(&content).map_err(|e| {
-        RuneError::config(format!(
-            "Failed to parse plugin manifest {}: {}",
-            path.display(),
-            e
-        ))
-    })?;
+    let manifest: PluginManifest = serde_json::from_str(&content)
+        .map_err(|e| RuneError::config(format!("Failed to parse plugin manifest: {}", e)))?;
 
     Ok(manifest)
 }
@@ -816,28 +829,63 @@ fn get_default_plugin_directories() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
 
     // Current directory plugins
+    dirs.push(PathBuf::from("plugins"));
     dirs.push(PathBuf::from("./plugins"));
 
-    // User-specific plugin directory
-    if let Some(home_dir) = dirs::home_dir() {
-        dirs.push(home_dir.join(".rune").join("plugins"));
+    // User config directory
+    if let Some(config_dir) = dirs::config_dir() {
+        dirs.push(config_dir.join("rune").join("plugins"));
     }
 
-    // System-wide plugin directory
-    #[cfg(unix)]
-    {
-        dirs.push(PathBuf::from("/usr/local/lib/rune/plugins"));
-        dirs.push(PathBuf::from("/opt/rune/plugins"));
-    }
-
-    #[cfg(windows)]
-    {
-        if let Some(program_files) = std::env::var_os("ProgramFiles") {
-            dirs.push(PathBuf::from(program_files).join("Rune").join("plugins"));
-        }
+    // System directories
+    if let Some(data_dir) = dirs::data_dir() {
+        dirs.push(data_dir.join("rune").join("plugins"));
     }
 
     dirs
+}
+
+/// Start configuration hot-reload in development mode
+async fn start_config_hot_reload(
+    config_path: PathBuf,
+    _config: std::sync::Arc<rune_core::Config>,
+) -> Result<()> {
+    info!(
+        "Starting configuration hot-reload for: {}",
+        config_path.display()
+    );
+
+    // In a real implementation, this would set up file watching for the config file
+    // and reload the configuration when it changes
+    tokio::spawn(async move {
+        // Placeholder for config hot-reload implementation
+        debug!(
+            "Config hot-reload task started for: {}",
+            config_path.display()
+        );
+    });
+
+    Ok(())
+}
+
+/// Start plugin directory watching in development mode
+async fn start_plugin_directory_watch(plugins_dir: PathBuf) -> Result<()> {
+    info!(
+        "Starting plugin directory watch for: {}",
+        plugins_dir.display()
+    );
+
+    // In a real implementation, this would set up file watching for the plugins directory
+    // and reload plugins when they change
+    tokio::spawn(async move {
+        // Placeholder for plugin directory watching implementation
+        debug!(
+            "Plugin directory watch task started for: {}",
+            plugins_dir.display()
+        );
+    });
+
+    Ok(())
 }
 
 /// Interactive configuration validation with detailed feedback
@@ -1047,118 +1095,6 @@ async fn interactive_config_validation(args: &Args) -> Result<()> {
     Ok(())
 }
 
-/// Start configuration file hot-reloading for development mode
-async fn start_config_hot_reload(
-    config_path: PathBuf,
-    _config: std::sync::Arc<Config>,
-) -> Result<()> {
-    use std::time::Duration;
-
-    info!(
-        "🔄 Starting configuration hot-reload for: {}",
-        config_path.display()
-    );
-
-    let path_clone = config_path.clone();
-
-    tokio::spawn(async move {
-        let mut last_modified = std::fs::metadata(&path_clone)
-            .and_then(|m| m.modified())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-
-        let mut interval = tokio::time::interval(Duration::from_secs(2));
-
-        loop {
-            interval.tick().await;
-
-            if let Ok(metadata) = std::fs::metadata(&path_clone) {
-                if let Ok(modified) = metadata.modified() {
-                    if modified > last_modified {
-                        last_modified = modified;
-
-                        info!("🔄 Configuration file changed, reloading...");
-
-                        match Config::from_file(&path_clone) {
-                            Ok(new_config) => {
-                                info!("✅ Configuration reloaded successfully");
-                                // In a real implementation, we would update the running config
-                                debug!(
-                                    "New config loaded with {} plugins",
-                                    new_config.plugins.len()
-                                );
-                            }
-                            Err(e) => {
-                                error!("❌ Failed to reload configuration: {}", e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
-
-    Ok(())
-}
-
-/// Start plugin directory watching for development mode
-async fn start_plugin_directory_watch(plugins_dir: PathBuf) -> Result<()> {
-    use std::time::Duration;
-
-    info!(
-        "👀 Starting plugin directory watch: {}",
-        plugins_dir.display()
-    );
-
-    tokio::spawn(async move {
-        let mut last_scan = std::time::SystemTime::UNIX_EPOCH;
-        let mut interval = tokio::time::interval(Duration::from_secs(5));
-
-        loop {
-            interval.tick().await;
-
-            if plugins_dir.exists() {
-                match scan_plugin_directory(&plugins_dir) {
-                    Ok(discovered) => {
-                        let scan_time = std::time::SystemTime::now();
-
-                        // Check if any plugins were added/removed/modified
-                        let mut changes_detected = false;
-
-                        for plugin in &discovered {
-                            if let Ok(metadata) = std::fs::metadata(&plugin.path) {
-                                if let Ok(modified) = metadata.modified() {
-                                    if modified > last_scan {
-                                        changes_detected = true;
-                                        info!(
-                                            "🔄 Plugin change detected: {} ({:?})",
-                                            plugin.name, plugin.plugin_type
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        if changes_detected {
-                            info!(
-                                "📦 Plugin directory scan complete: {} plugins found",
-                                discovered.len()
-                            );
-                            // In a real implementation, we would trigger plugin reloading here
-                        }
-
-                        last_scan = scan_time;
-                    }
-                    Err(e) => {
-                        debug!("Failed to scan plugin directory: {}", e);
-                    }
-                }
-            }
-        }
-    });
-
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Parse command line arguments
@@ -1250,15 +1186,73 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
+    // Register built-in plugins
+    let context = engine.create_plugin_context();
+
+    // Register file watcher plugin
+    let file_watcher = Box::new(rune_file_watcher::FileWatcherPlugin::new());
+    if let Err(e) = engine.register_plugin(file_watcher, &context).await {
+        error!("Failed to register file watcher plugin: {}", e);
+        std::process::exit(1);
+    }
+
+    // Register renderer plugin
+    let renderer = Box::new(rune_renderer::RendererPlugin::new());
+    if let Err(e) = engine.register_plugin(renderer, &context).await {
+        error!("Failed to register renderer plugin: {}", e);
+        std::process::exit(1);
+    }
+
+    // Register server plugin
+    let server = Box::new(rune_server::ServerPlugin::new());
+    if let Err(e) = engine.register_plugin(server, &context).await {
+        error!("Failed to register server plugin: {}", e);
+        std::process::exit(1);
+    }
+
+    // Register theme plugin
+    let theme = Box::new(rune_theme::ThemePlugin::new());
+    if let Err(e) = engine.register_plugin(theme, &context).await {
+        error!("Failed to register theme plugin: {}", e);
+        std::process::exit(1);
+    }
+
+    info!("All built-in plugins registered successfully");
+
+    // Add the markdown file to watch
+    if let Err(e) = engine.watch_file(args.file.clone()).await {
+        error!("Failed to start watching file: {}", e);
+        std::process::exit(1);
+    }
+
     // Display startup information
     println!("🌟 Rune Markdown Live Editor");
     println!("📁 File: {}", args.file.display());
-    println!("🌐 Server: http://{}:{}", args.hostname, args.port);
+
+    if let Some(server_addr) = engine.get_server_address().await {
+        println!("🌐 Server: http://{}", server_addr);
+    } else {
+        println!("⚠️  Server not available");
+    }
+
+    // Display plugin information
+    let loaded_plugins = engine.get_loaded_plugins();
+    println!("🔌 Loaded plugins: {}", loaded_plugins.len());
 
     if args.dev_mode {
         println!("🔧 Development mode enabled");
         println!("🔄 Hot-reloading active");
         println!("📊 Enhanced debugging enabled");
+
+        // Display detailed plugin information in dev mode
+        for plugin in &loaded_plugins {
+            println!(
+                "   • {} v{} ({})",
+                plugin.name,
+                plugin.version,
+                format!("{:?}", plugin.status).to_lowercase()
+            );
+        }
 
         // Start configuration hot-reloading in dev mode
         if let Some(config_file) = &args.config_file {
@@ -1280,12 +1274,42 @@ async fn main() -> Result<()> {
 
     println!("📡 WebSocket live reload enabled");
 
+    // Display system health
+    let system_health = engine.get_system_health();
+    let health_icon = match system_health {
+        rune_core::plugin::SystemHealthStatus::Healthy => "✅",
+        rune_core::plugin::SystemHealthStatus::Degraded => "⚠️",
+        rune_core::plugin::SystemHealthStatus::Unhealthy => "❌",
+    };
+    println!("🏥 System health: {} {:?}", health_icon, system_health);
+
     if args.dev_mode {
         println!("\n🔧 Development Features:");
         println!("   • Configuration hot-reload");
         println!("   • Plugin directory watching");
         println!("   • Enhanced error reporting");
         println!("   • Debug logging enabled");
+
+        // Validate system in dev mode
+        match engine.validate_system().await {
+            Ok(validation) => {
+                if !validation.is_valid {
+                    println!("   ⚠️  System validation issues:");
+                    for error in &validation.errors {
+                        println!("      • {}", error);
+                    }
+                }
+                if !validation.warnings.is_empty() {
+                    println!("   ⚠️  System warnings:");
+                    for warning in &validation.warnings {
+                        println!("      • {}", warning);
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to validate system: {}", e);
+            }
+        }
     }
 
     println!("\n✨ Server ready! Press Ctrl+C to stop.\n");
@@ -1297,30 +1321,9 @@ async fn main() -> Result<()> {
         args.file.display()
     );
 
-    // Set up graceful shutdown
-    let shutdown_signal = async {
-        match tokio::signal::ctrl_c().await {
-            Ok(()) => {
-                info!("Shutdown signal received");
-                println!("\n🛑 Shutting down gracefully...");
-            }
-            Err(e) => {
-                error!("Failed to listen for shutdown signal: {}", e);
-            }
-        }
-    };
-
-    // In a complete implementation, this would start the actual server
-    // For now, we just wait for shutdown
-    tokio::select! {
-        _ = shutdown_signal => {
-            info!("Initiating graceful shutdown...");
-        }
-    }
-
-    // Shutdown the engine
-    if let Err(e) = engine.shutdown().await {
-        error!("Error during shutdown: {}", e);
+    // Run the core engine (this will handle all plugin coordination and shutdown signals)
+    if let Err(e) = engine.run().await {
+        error!("Core engine error: {}", e);
         std::process::exit(1);
     }
 

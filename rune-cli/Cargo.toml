@@ -18,3 +18,9 @@ tracing-subscriber = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 dirs = "5.0"
+
+# Built-in plugin dependencies
+rune-file-watcher = { path = "../plugins/file-watcher" }
+rune-renderer = { path = "../plugins/renderer" }
+rune-server = { path = "../plugins/server" }
+rune-theme = { path = "../plugins/theme" }
