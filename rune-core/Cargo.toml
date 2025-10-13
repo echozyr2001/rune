@@ -15,6 +15,7 @@ async-trait = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 dirs = "5.0"
+regex = "1.10"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

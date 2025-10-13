@@ -20,7 +20,10 @@ mod plugin_test;
 mod plugin_context_test;
 
 // Re-export commonly used types
-pub use config::{Config, PluginConfig, SystemConfig};
+pub use config::{
+    Config, ConfigLoadContext, ConfigMetadata, PluginConfig, RuntimeConfigManager, ServerConfig,
+    SystemConfig, ValidationResult,
+};
 pub use error::{Result, RuneError};
 pub use event::{
     Event, EventBus, EventFilter, EventHandler, ExtendedEventBus, InMemoryEventBus, SubscriptionId,

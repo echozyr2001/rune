@@ -1231,6 +1231,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dirs",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
