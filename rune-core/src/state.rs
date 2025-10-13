@@ -102,6 +102,12 @@ impl StateManager {
         let state = self.state.read().await;
         state.system_health.clone()
     }
+
+    /// Clear all state (used during shutdown)
+    pub async fn clear_state(&self) {
+        let mut state = self.state.write().await;
+        *state = ApplicationState::default();
+    }
 }
 
 impl Default for StateManager {

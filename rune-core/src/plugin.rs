@@ -312,15 +312,22 @@ impl PluginRegistry {
         Ok(())
     }
 
-    /// Shutdown all plugins gracefully
+    /// Shutdown all plugins gracefully with enhanced dependency-aware ordering
     pub async fn shutdown(&mut self) -> Result<()> {
-        info!("Shutting down plugin registry");
+        info!("Shutting down plugin registry with dependency-aware ordering");
 
         // Stop health monitoring first
         self.health_monitor.stop_monitoring().await;
 
-        // Shutdown plugins in reverse load order for proper dependency cleanup
-        for plugin_name in self.load_order.iter().rev() {
+        // Calculate shutdown order (reverse of dependency order)
+        let shutdown_order = self.calculate_shutdown_order();
+        info!("Plugin shutdown order: {:?}", shutdown_order);
+
+        let mut shutdown_errors = Vec::new();
+        let mut successful_shutdowns = 0;
+
+        // Shutdown plugins in calculated order
+        for plugin_name in &shutdown_order {
             if let Some(mut plugin) = self.plugins.remove(plugin_name) {
                 info!("Shutting down plugin: {}", plugin_name);
 
@@ -329,24 +336,63 @@ impl PluginRegistry {
                     info.status = PluginStatus::Shutting;
                 }
 
+                // Notify dependent plugins that this plugin is shutting down
+                self.notify_dependents_of_shutdown(plugin_name).await;
+
                 // Attempt graceful shutdown with timeout
-                match tokio::time::timeout(Duration::from_secs(30), plugin.shutdown()).await {
+                let shutdown_timeout = Duration::from_secs(30);
+                match tokio::time::timeout(shutdown_timeout, plugin.shutdown()).await {
                     Ok(Ok(())) => {
                         info!("Plugin {} shutdown successfully", plugin_name);
                         if let Some(info) = self.plugin_info.get_mut(plugin_name) {
                             info.status = PluginStatus::Stopped;
                         }
+                        successful_shutdowns += 1;
                     }
                     Ok(Err(e)) => {
                         error!("Plugin {} shutdown failed: {}", plugin_name, e);
                         if let Some(info) = self.plugin_info.get_mut(plugin_name) {
                             info.status = PluginStatus::Error(format!("Shutdown failed: {}", e));
                         }
+                        shutdown_errors.push((plugin_name.clone(), e.to_string()));
                     }
                     Err(_) => {
                         error!("Plugin {} shutdown timed out", plugin_name);
                         if let Some(info) = self.plugin_info.get_mut(plugin_name) {
                             info.status = PluginStatus::Error("Shutdown timeout".to_string());
+                        }
+                        shutdown_errors.push((plugin_name.clone(), "Shutdown timeout".to_string()));
+                    }
+                }
+
+                // Small delay between plugin shutdowns to allow cleanup
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+
+        // Handle any remaining plugins that weren't in the shutdown order
+        let remaining_plugins: Vec<String> = self.plugins.keys().cloned().collect();
+        if !remaining_plugins.is_empty() {
+            warn!("Force shutting down remaining plugins: {:?}", remaining_plugins);
+            for plugin_name in remaining_plugins {
+                if let Some(mut plugin) = self.plugins.remove(&plugin_name) {
+                    if let Some(info) = self.plugin_info.get_mut(&plugin_name) {
+                        info.status = PluginStatus::Shutting;
+                    }
+
+                    // Force shutdown with shorter timeout
+                    match tokio::time::timeout(Duration::from_secs(10), plugin.shutdown()).await {
+                        Ok(Ok(())) => {
+                            info!("Force shutdown successful for plugin: {}", plugin_name);
+                            successful_shutdowns += 1;
+                        }
+                        Ok(Err(e)) => {
+                            error!("Force shutdown failed for plugin {}: {}", plugin_name, e);
+                            shutdown_errors.push((plugin_name.clone(), format!("Force shutdown failed: {}", e)));
+                        }
+                        Err(_) => {
+                            error!("Force shutdown timed out for plugin: {}", plugin_name);
+                            shutdown_errors.push((plugin_name.clone(), "Force shutdown timeout".to_string()));
                         }
                     }
                 }
@@ -359,8 +405,94 @@ impl PluginRegistry {
         self.load_order.clear();
         self.dependencies = DependencyGraph::new();
 
-        info!("Plugin registry shutdown complete");
+        // Report shutdown results
+        let total_plugins = successful_shutdowns + shutdown_errors.len();
+        if shutdown_errors.is_empty() {
+            info!("Plugin registry shutdown complete: all {} plugins shutdown successfully", total_plugins);
+        } else {
+            warn!(
+                "Plugin registry shutdown complete with errors: {}/{} plugins shutdown successfully",
+                successful_shutdowns, total_plugins
+            );
+            for (plugin, error) in &shutdown_errors {
+                warn!("  {}: {}", plugin, error);
+            }
+        }
+
+        // Return error if any critical plugins failed to shutdown
+        if shutdown_errors.iter().any(|(name, _)| self.is_critical_plugin_name(name)) {
+            return Err(crate::error::RuneError::Plugin(format!(
+                "Critical plugins failed to shutdown: {}",
+                shutdown_errors.iter()
+                    .filter(|(name, _)| self.is_critical_plugin_name(name))
+                    .map(|(name, error)| format!("{}: {}", name, error))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+
         Ok(())
+    }
+
+    /// Calculate the proper shutdown order based on dependencies
+    fn calculate_shutdown_order(&self) -> Vec<String> {
+        // Shutdown order should be reverse of load order to respect dependencies
+        // Plugins that depend on others should shutdown first
+        let mut shutdown_order = self.load_order.clone();
+        shutdown_order.reverse();
+
+        // Additionally, we can use the dependency graph to ensure proper ordering
+        if let Ok(dependency_order) = self.dependencies.resolve_load_order() {
+            // Reverse the dependency order for shutdown
+            let mut dep_shutdown_order = dependency_order;
+            dep_shutdown_order.reverse();
+
+            // Merge with load order, preferring dependency-based ordering
+            let mut final_order = Vec::new();
+            let mut processed = std::collections::HashSet::new();
+
+            // First, add plugins in dependency shutdown order
+            for plugin in dep_shutdown_order {
+                if self.plugins.contains_key(&plugin) && !processed.contains(&plugin) {
+                    final_order.push(plugin.clone());
+                    processed.insert(plugin);
+                }
+            }
+
+            // Then add any remaining plugins from load order
+            for plugin in shutdown_order {
+                if self.plugins.contains_key(&plugin) && !processed.contains(&plugin) {
+                    final_order.push(plugin.clone());
+                    processed.insert(plugin);
+                }
+            }
+
+            final_order
+        } else {
+            // Fallback to simple reverse load order
+            shutdown_order
+        }
+    }
+
+    /// Notify dependent plugins that a plugin is shutting down
+    async fn notify_dependents_of_shutdown(&self, shutting_down_plugin: &str) {
+        let dependents = self.dependencies.get_dependents(shutting_down_plugin);
+        
+        if !dependents.is_empty() {
+            info!("Notifying {} dependent plugins of {} shutdown", dependents.len(), shutting_down_plugin);
+            
+            // In a real implementation, this would send events to dependent plugins
+            // For now, we'll just log the notification
+            for dependent in dependents {
+                debug!("Would notify plugin {} that {} is shutting down", dependent, shutting_down_plugin);
+            }
+        }
+    }
+
+    /// Check if a plugin name refers to a critical plugin
+    fn is_critical_plugin_name(&self, name: &str) -> bool {
+        // Define critical plugins that should shutdown cleanly
+        matches!(name, "server" | "renderer")
     }
 
     /// Register and initialize a plugin with full lifecycle management
