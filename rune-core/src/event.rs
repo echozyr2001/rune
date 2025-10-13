@@ -283,6 +283,12 @@ pub enum SystemEvent {
         path: String,
         timestamp: SystemTime,
     },
+    /// System shutdown initiated
+    SystemShutdownInitiated { timestamp: SystemTime },
+    /// System preparing for shutdown
+    SystemShutdownPreparing { timestamp: SystemTime },
+    /// System shutdown completed
+    SystemShutdownComplete { timestamp: SystemTime },
 }
 
 #[async_trait]
@@ -302,6 +308,9 @@ impl Event for SystemEvent {
             SystemEvent::ServerStarted { .. } => "server_started",
             SystemEvent::ServerHandlerRegistered { .. } => "server_handler_registered",
             SystemEvent::ServerHandlerUnregistered { .. } => "server_handler_unregistered",
+            SystemEvent::SystemShutdownInitiated { .. } => "system_shutdown_initiated",
+            SystemEvent::SystemShutdownPreparing { .. } => "system_shutdown_preparing",
+            SystemEvent::SystemShutdownComplete { .. } => "system_shutdown_complete",
         }
     }
 
@@ -320,6 +329,9 @@ impl Event for SystemEvent {
             SystemEvent::ServerStarted { timestamp, .. } => *timestamp,
             SystemEvent::ServerHandlerRegistered { timestamp, .. } => *timestamp,
             SystemEvent::ServerHandlerUnregistered { timestamp, .. } => *timestamp,
+            SystemEvent::SystemShutdownInitiated { timestamp, .. } => *timestamp,
+            SystemEvent::SystemShutdownPreparing { timestamp, .. } => *timestamp,
+            SystemEvent::SystemShutdownComplete { timestamp, .. } => *timestamp,
         }
     }
 
@@ -402,6 +414,15 @@ impl Event for SystemEvent {
             } => {
                 metadata.insert("handler_type".to_string(), handler_type.clone());
                 metadata.insert("path".to_string(), path.clone());
+            }
+            SystemEvent::SystemShutdownInitiated { .. } => {
+                // No additional metadata for shutdown events
+            }
+            SystemEvent::SystemShutdownPreparing { .. } => {
+                // No additional metadata for shutdown events
+            }
+            SystemEvent::SystemShutdownComplete { .. } => {
+                // No additional metadata for shutdown events
             }
         }
 
@@ -552,6 +573,27 @@ impl SystemEvent {
         }
     }
 
+    /// Create a new system shutdown initiated event with current timestamp
+    pub fn system_shutdown_initiated() -> Self {
+        Self::SystemShutdownInitiated {
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new system shutdown preparing event with current timestamp
+    pub fn system_shutdown_preparing() -> Self {
+        Self::SystemShutdownPreparing {
+            timestamp: SystemTime::now(),
+        }
+    }
+
+    /// Create a new system shutdown complete event with current timestamp
+    pub fn system_shutdown_complete() -> Self {
+        Self::SystemShutdownComplete {
+            timestamp: SystemTime::now(),
+        }
+    }
+
     /// Get a human-readable description of the event
     pub fn description(&self) -> String {
         match self {
@@ -619,6 +661,11 @@ impl SystemEvent {
             } => {
                 format!("Server handler unregistered: {} {}", handler_type, path)
             }
+            SystemEvent::SystemShutdownInitiated { .. } => "System shutdown initiated".to_string(),
+            SystemEvent::SystemShutdownPreparing { .. } => {
+                "System preparing for shutdown".to_string()
+            }
+            SystemEvent::SystemShutdownComplete { .. } => "System shutdown completed".to_string(),
         }
     }
 
