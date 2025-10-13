@@ -1016,6 +1016,24 @@ impl WebSocketHandler for LiveReloadHandler {
             connection.id, connection.remote_addr
         );
 
+        // Subscribe this connection to the shared reload sender
+        if let Some(reload_sender) = self.get_reload_sender().await {
+            let mut rx = reload_sender.subscribe();
+            let conn_sender = connection.sender.clone();
+
+            tokio::spawn(async move {
+                while let Ok(msg) = rx.recv().await {
+                    // Convert ServerMessage to WebSocketMessage
+                    if let Ok(text) = serde_json::to_string(&msg) {
+                        if conn_sender.send(WebSocketMessage::Text(text)).is_err() {
+                            // Connection closed
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
         // Send a welcome message
         connection
             .send_json(&serde_json::json!({
