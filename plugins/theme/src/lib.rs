@@ -574,4 +574,12 @@ impl Plugin for ThemePlugin {
     fn provided_services(&self) -> Vec<&str> {
         vec!["theme-management", "css-serving", "theme-provider"]
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }

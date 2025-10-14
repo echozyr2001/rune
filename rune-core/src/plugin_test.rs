@@ -73,6 +73,14 @@ mod tests {
         fn provided_services(&self) -> Vec<&str> {
             self.services.iter().map(|s| s.as_str()).collect()
         }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
     }
 
     fn create_test_context() -> PluginContext {

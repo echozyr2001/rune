@@ -107,7 +107,7 @@ async fn demo_configuration_overrides() -> Result<()> {
     override_config.save_to_file(&override_path)?;
 
     // Load with overrides
-    let merged_config = Config::load_with_overrides(&base_config_path, &[override_path.clone()])?;
+    let merged_config = Config::load_with_overrides(&base_config_path, std::slice::from_ref(&override_path))?;
 
     println!("✅ Configuration loaded with overrides");
     println!("   Base config: {}", base_config_path.display());

@@ -413,6 +413,75 @@
             }
         }
 
+        // Incremental update function to avoid full page reload
+        async function performIncrementalUpdate() {
+            try {
+                console.log('🔄 Performing incremental content update...');
+                
+                // Save current scroll position
+                const scrollPosition = window.pageYOffset || document.documentElement.scrollTop;
+                
+                // Fetch updated content
+                const response = await fetch(window.location.pathname, {
+                    headers: {
+                        'Accept': 'text/html',
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const newHtml = await response.text();
+                const parser = new DOMParser();
+                const newDoc = parser.parseFromString(newHtml, 'text/html');
+                
+                // Update the main content area
+                const currentContent = document.querySelector('#content');
+                const newContent = newDoc.querySelector('#content');
+                
+                if (currentContent && newContent) {
+                    // Smooth transition effect
+                    currentContent.style.opacity = '0.7';
+                    currentContent.style.transition = 'opacity 0.2s ease';
+                    
+                    setTimeout(() => {
+                        currentContent.innerHTML = newContent.innerHTML;
+                        currentContent.style.opacity = '1';
+                        
+                        // Re-initialize syntax highlighting if present
+                        if (typeof Prism !== 'undefined') {
+                            Prism.highlightAll();
+                        }
+                        
+                        // Re-render mermaid diagrams
+                        if (typeof mermaid !== 'undefined') {
+                            const mermaidElements = document.querySelectorAll('.mermaid');
+                            mermaidElements.forEach((element) => {
+                                element.removeAttribute('data-processed');
+                            });
+                            mermaid.run();
+                        }
+                        
+                        // Restore scroll position
+                        window.scrollTo(0, scrollPosition);
+                        
+                        console.log('✅ Content updated successfully (no page reload)');
+                    }, 100);
+                } else {
+                    // Fallback to full reload if content structure changed significantly
+                    console.log('⚠️ Content structure changed, falling back to full reload');
+                    window.location.reload();
+                }
+                
+            } catch (error) {
+                console.error('❌ Incremental update failed:', error);
+                console.log('🔄 Falling back to full page reload');
+                window.location.reload();
+            }
+        }
+
         // Auto-refresh functionality using WebSocket
         function setupLiveReload() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -427,8 +496,10 @@
                 try {
                     const message = JSON.parse(event.data);
                     if (message.type === 'Reload') {
-                        console.log('Reloading page via WebSocket');
-                        window.location.reload();
+                        console.log('File changed, performing incremental update...');
+                        
+                        // Instead of full page reload, fetch and update content
+                        performIncrementalUpdate();
                     }
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);

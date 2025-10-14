@@ -879,14 +879,11 @@ impl Plugin for ServerPlugin {
 
         self.handler_registry = Some(registry.clone());
 
-        // Channel to signal the file path to the simple monitor
-        let (monitor_tx, mut monitor_rx) = tokio::sync::mpsc::channel(1);
-
         // Subscribe to system events to handle file changes
+        // Note: We no longer start our own file monitoring - we rely on the FileWatcher plugin
         let server_event_handler = Arc::new(ServerEventHandler {
             plugin_context: context.clone(),
             handler_registry: registry.clone(),
-            simple_monitor_starter: monitor_tx,
         });
 
         context
@@ -894,48 +891,7 @@ impl Plugin for ServerPlugin {
             .subscribe_system_events(server_event_handler)
             .await?;
 
-        // Spawn a task that waits for the file path and then starts monitoring
-        let event_bus = context.event_bus.clone();
-        tokio::spawn(async move {
-            if let Some(file_path) = monitor_rx.recv().await {
-                info!(
-                    "Starting simple file monitoring for: {}",
-                    file_path.display()
-                );
-
-                let mut last_modified = std::fs::metadata(&file_path)
-                    .and_then(|m| m.modified())
-                    .unwrap_or_else(|_| std::time::SystemTime::now());
-
-                let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-
-                loop {
-                    interval.tick().await;
-
-                    if let Ok(metadata) = std::fs::metadata(&file_path) {
-                        if let Ok(modified) = metadata.modified() {
-                            if modified > last_modified {
-                                last_modified = modified;
-
-                                info!(
-                                    "File changed, publishing reload event: {}",
-                                    file_path.display()
-                                );
-
-                                let change_event = rune_core::event::SystemEvent::file_changed(
-                                    file_path.clone(),
-                                    rune_core::event::ChangeType::Modified,
-                                );
-
-                                if let Err(e) = event_bus.publish_system_event(change_event).await {
-                                    error!("Failed to publish file change event: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        info!("Server plugin will rely on FileWatcher plugin for file change detection");
 
         // Register core handlers
         self.register_core_handlers(context).await?;
@@ -1010,6 +966,14 @@ impl Plugin for ServerPlugin {
     fn provided_services(&self) -> Vec<&str> {
         vec!["http_server", "websocket_server", "handler_registry"]
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 impl Default for ServerPlugin {
@@ -1022,7 +986,6 @@ impl Default for ServerPlugin {
 struct ServerEventHandler {
     plugin_context: PluginContext,
     handler_registry: Arc<HandlerRegistry>,
-    simple_monitor_starter: tokio::sync::mpsc::Sender<std::path::PathBuf>,
 }
 
 #[async_trait]
@@ -1038,9 +1001,8 @@ impl rune_core::event::SystemEventHandler for ServerEventHandler {
                     change_type
                 );
 
-                // Try to start the simple monitor. This will only work the first time.
-                // We ignore the error in case the receiver has been dropped.
-                let _ = self.simple_monitor_starter.try_send(path.clone());
+                // File monitoring is now handled by the FileWatcher plugin
+                info!("File change detected, relying on FileWatcher plugin for monitoring");
 
                 // Always try to register handlers for the file - this is idempotent
                 // The registry will handle duplicates appropriately

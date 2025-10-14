@@ -5,6 +5,8 @@ edition = "2021"
 description = "Core engine and interfaces for the Rune markdown live editor"
 
 [dependencies]
+notify = { workspace = true }
+glob-match = "0.2.1"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

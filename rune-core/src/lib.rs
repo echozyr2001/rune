@@ -6,6 +6,7 @@
 pub mod config;
 pub mod error;
 pub mod event;
+pub mod file_watcher;
 pub mod plugin;
 pub mod renderer;
 pub mod state;
@@ -29,6 +30,7 @@ pub use event::{
     Event, EventBus, EventFilter, EventHandler, ExtendedEventBus, InMemoryEventBus, SubscriptionId,
     SystemEvent, SystemEventHandler,
 };
+pub use file_watcher::{DefaultFileFilter, FileFilter, FileWatcher, FileWatcherConfig, WatcherId};
 pub use plugin::{Plugin, PluginContext, PluginInfo, PluginRegistry, PluginStatus};
 pub use renderer::{
     Asset, AssetType, ContentRenderer, RenderContext, RenderMetadata, RenderResult,
@@ -812,8 +814,8 @@ impl CoreEngine {
         Ok(())
     }
 
-    /// Add a file to watch (convenience method)
-    pub async fn watch_file(&mut self, file_path: PathBuf) -> Result<()> {
+    /// Add a file to watch using the FileWatcher plugin
+    pub async fn watch_file(&mut self, file_path: PathBuf) -> Result<WatcherId> {
         tracing::info!("Adding file to watch: {}", file_path.display());
 
         // Update application state
@@ -821,11 +823,13 @@ impl CoreEngine {
             .set_current_file(Some(file_path.clone()))
             .await;
 
-        // Publish file change event to notify plugins
-        let event = SystemEvent::file_changed(file_path, event::ChangeType::Modified);
+        // Publish the file change event for immediate processing
+        // The FileWatcher plugin will automatically start monitoring the current directory
+        let event = SystemEvent::file_changed(file_path.clone(), event::ChangeType::Modified);
         self.event_bus.publish_system_event(event).await?;
 
-        Ok(())
+        tracing::info!("File change event published for: {}", file_path.display());
+        Ok(WatcherId::new())
     }
 
     /// Get current watched file
