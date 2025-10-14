@@ -1123,13 +1123,16 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
 impl LiveReloadEventHandler {
     /// Try to push content update directly via WebSocket
     async fn try_push_content_update(&self, file_path: &std::path::Path) -> Result<()> {
-        debug!("Attempting to push content update for: {}", file_path.display());
-        
+        debug!(
+            "Attempting to push content update for: {}",
+            file_path.display()
+        );
+
         // Check if this is a markdown file
         if let Some(extension) = file_path.extension() {
             if extension == "md" || extension == "markdown" {
                 debug!("File is markdown, looking for handlers");
-                
+
                 // Get all HTTP handlers from the registry
                 let handlers = self.handler_registry.get_all_http_handlers().await;
                 debug!("Found {} handlers in registry", handlers.len());
@@ -1137,13 +1140,17 @@ impl LiveReloadEventHandler {
                 // Look for a markdown handler that matches this file
                 for (i, handler) in handlers.iter().enumerate() {
                     debug!("Checking handler {}: {}", i, handler.path_pattern());
-                    
+
                     // Try to downcast to MarkdownHandler
                     if let Some(markdown_handler) =
                         handler.as_any().downcast_ref::<handlers::MarkdownHandler>()
                     {
-                        debug!("Handler {} is MarkdownHandler, file path: {}", i, markdown_handler.markdown_file().display());
-                        
+                        debug!(
+                            "Handler {} is MarkdownHandler, file path: {}",
+                            i,
+                            markdown_handler.markdown_file().display()
+                        );
+
                         // Check if this handler is for the same file
                         // Handle both absolute and relative path comparisons
                         let handler_path = markdown_handler.markdown_file();
@@ -1169,26 +1176,31 @@ impl LiveReloadEventHandler {
                             // Both relative - direct comparison
                             handler_path == file_path
                         };
-                        
+
                         if paths_match {
                             info!("Found matching handler for file: {}", file_path.display());
-                            
+
                             // Use the markdown handler to render and push content
                             markdown_handler
                                 .render_and_push_content(&self.live_reload_handler)
                                 .await?;
                             return Ok(());
                         } else {
-                            debug!("Handler file {} does not match target file {}", 
-                                  markdown_handler.markdown_file().display(), 
-                                  file_path.display());
+                            debug!(
+                                "Handler file {} does not match target file {}",
+                                markdown_handler.markdown_file().display(),
+                                file_path.display()
+                            );
                         }
                     } else {
                         debug!("Handler {} is not a MarkdownHandler", i);
                     }
                 }
-                
-                debug!("No matching MarkdownHandler found for file: {}", file_path.display());
+
+                debug!(
+                    "No matching MarkdownHandler found for file: {}",
+                    file_path.display()
+                );
             } else {
                 debug!("File is not markdown (extension: {:?})", extension);
             }
