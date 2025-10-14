@@ -20,13 +20,18 @@ use rune_core::{
     plugin::{Plugin, PluginContext, PluginStatus},
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::{
     net::TcpListener,
     sync::{broadcast, RwLock},
 };
 use tower_http::cors::CorsLayer;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// HTTP handler trait for processing HTTP requests
 #[async_trait]
@@ -246,9 +251,22 @@ impl HandlerRegistry {
         let path = handler.path_pattern().to_string();
         let method = handler.method().clone();
 
-        info!("Registering HTTP handler: {} {}", method, path);
-
         let mut handlers = self.http_handlers.write().await;
+
+        // Check if a handler with the same path and method already exists
+        let existing_count = handlers.len();
+        handlers.retain(|h| !(h.path_pattern() == path && h.method() == method));
+        let removed_count = existing_count - handlers.len();
+
+        if removed_count > 0 {
+            info!(
+                "Replaced {} existing HTTP handler(s): {} {}",
+                removed_count, method, path
+            );
+        } else {
+            info!("Registering HTTP handler: {} {}", method, path);
+        }
+
         handlers.push(handler);
 
         // Sort by priority (lower numbers first)
@@ -505,7 +523,7 @@ impl ServerPlugin {
             if let Some(current_file) = state.current_file {
                 self.register_file_handlers(&current_file, context).await?;
             } else {
-                info!("No current file set during initialization, will register handlers when file is set");
+                info!("No current file set during initialization, handlers will be registered when file is set");
             }
         }
         Ok(())
@@ -900,6 +918,7 @@ impl Plugin for ServerPlugin {
         let server_event_handler = Arc::new(ServerEventHandler {
             plugin_context: context.clone(),
             handler_registry: registry.clone(),
+            current_served_file: Arc::new(RwLock::new(None)),
         });
 
         context
@@ -1002,6 +1021,7 @@ impl Default for ServerPlugin {
 struct ServerEventHandler {
     plugin_context: PluginContext,
     handler_registry: Arc<HandlerRegistry>,
+    current_served_file: Arc<RwLock<Option<PathBuf>>>,
 }
 
 #[async_trait]
@@ -1017,13 +1037,32 @@ impl rune_core::event::SystemEventHandler for ServerEventHandler {
                     change_type
                 );
 
-                // File monitoring is now handled by the FileWatcher plugin
-                info!("File change detected, relying on FileWatcher plugin for monitoring");
+                // Check if we need to register handlers for a new file
+                let state = self.plugin_context.state_manager.get_state().await;
+                if let Some(current_file) = state.current_file {
+                    let needs_registration = {
+                        let served_file = self.current_served_file.read().await;
+                        served_file.as_ref() != Some(&current_file)
+                    };
 
-                // Always try to register handlers for the file - this is idempotent
-                // The registry will handle duplicates appropriately
-                info!("Registering/updating handlers for file: {}", path.display());
-                self.register_file_handlers_for_event(path).await?;
+                    if needs_registration {
+                        info!(
+                            "Current file changed, registering handlers for: {}",
+                            current_file.display()
+                        );
+                        self.register_handlers_for_new_file(&current_file).await?;
+
+                        // Update the served file cache
+                        {
+                            let mut served_file = self.current_served_file.write().await;
+                            *served_file = Some(current_file);
+                        }
+                    } else {
+                        info!("File content changed, existing handlers will serve updated content");
+                    }
+                } else {
+                    info!("File change detected but no current file set");
+                }
             }
             _ => {
                 // Ignore other events
@@ -1084,33 +1123,77 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
 impl LiveReloadEventHandler {
     /// Try to push content update directly via WebSocket
     async fn try_push_content_update(&self, file_path: &std::path::Path) -> Result<()> {
+        debug!("Attempting to push content update for: {}", file_path.display());
+        
         // Check if this is a markdown file
         if let Some(extension) = file_path.extension() {
             if extension == "md" || extension == "markdown" {
+                debug!("File is markdown, looking for handlers");
+                
                 // Get all HTTP handlers from the registry
                 let handlers = self.handler_registry.get_all_http_handlers().await;
+                debug!("Found {} handlers in registry", handlers.len());
 
                 // Look for a markdown handler that matches this file
-                for handler in &handlers {
+                for (i, handler) in handlers.iter().enumerate() {
+                    debug!("Checking handler {}: {}", i, handler.path_pattern());
+                    
                     // Try to downcast to MarkdownHandler
                     if let Some(markdown_handler) =
                         handler.as_any().downcast_ref::<handlers::MarkdownHandler>()
                     {
+                        debug!("Handler {} is MarkdownHandler, file path: {}", i, markdown_handler.markdown_file().display());
+                        
                         // Check if this handler is for the same file
-                        let handler_file = markdown_handler
-                            .base_dir()
-                            .join(file_path.file_name().unwrap_or_default());
-
-                        if handler_file == file_path {
+                        // Handle both absolute and relative path comparisons
+                        let handler_path = markdown_handler.markdown_file();
+                        let paths_match = if handler_path.is_absolute() && file_path.is_absolute() {
+                            // Both absolute - direct comparison
+                            handler_path == file_path
+                        } else if handler_path.is_relative() && file_path.is_absolute() {
+                            // Handler has relative path, event has absolute path
+                            // Compare file names or try to resolve relative path
+                            if let Some(file_name) = file_path.file_name() {
+                                handler_path.file_name() == Some(file_name)
+                            } else {
+                                false
+                            }
+                        } else if handler_path.is_absolute() && file_path.is_relative() {
+                            // Handler has absolute path, event has relative path
+                            if let Some(file_name) = handler_path.file_name() {
+                                file_path.file_name() == Some(file_name)
+                            } else {
+                                false
+                            }
+                        } else {
+                            // Both relative - direct comparison
+                            handler_path == file_path
+                        };
+                        
+                        if paths_match {
+                            info!("Found matching handler for file: {}", file_path.display());
+                            
                             // Use the markdown handler to render and push content
                             markdown_handler
                                 .render_and_push_content(&self.live_reload_handler)
                                 .await?;
                             return Ok(());
+                        } else {
+                            debug!("Handler file {} does not match target file {}", 
+                                  markdown_handler.markdown_file().display(), 
+                                  file_path.display());
                         }
+                    } else {
+                        debug!("Handler {} is not a MarkdownHandler", i);
                     }
                 }
+                
+                debug!("No matching MarkdownHandler found for file: {}", file_path.display());
+            } else {
+                debug!("File is not markdown (extension: {:?})", extension);
             }
+        } else {
+            debug!("File has no extension");
         }
 
         // If we can't find a specific handler or it's not a markdown file,
@@ -1122,10 +1205,27 @@ impl LiveReloadEventHandler {
 }
 
 impl ServerEventHandler {
-    /// Register file handlers in response to an event
-    async fn register_file_handlers_for_event(&self, file_path: &std::path::Path) -> Result<()> {
+    /// Register handlers for a new file (when the current file changes)
+    async fn register_handlers_for_new_file(&self, file_path: &Path) -> Result<()> {
+        // Only register handlers for markdown files
+        if let Some(extension) = file_path.extension() {
+            if extension != "md" && extension != "markdown" {
+                info!(
+                    "Skipping handler registration for non-markdown file: {}",
+                    file_path.display()
+                );
+                return Ok(());
+            }
+        } else {
+            info!(
+                "Skipping handler registration for file without extension: {}",
+                file_path.display()
+            );
+            return Ok(());
+        }
+
         info!(
-            "Registering markdown handler for file: {}",
+            "Registering handlers for new markdown file: {}",
             file_path.display()
         );
 
@@ -1183,7 +1283,7 @@ impl ServerEventHandler {
         }
 
         info!(
-            "File handlers registered successfully for: {}",
+            "Handlers registered successfully for: {}",
             file_path.display()
         );
         Ok(())
