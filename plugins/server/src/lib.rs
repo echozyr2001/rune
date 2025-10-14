@@ -6,6 +6,9 @@
 //! It supports dynamic route registration, handler hot-reloading, and multiple protocols.
 
 pub mod handlers;
+pub mod editor_handlers;
+
+pub use editor_handlers::{RawEditorHandler, EditorWebSocketHandler};
 
 use async_trait::async_trait;
 use axum::{
@@ -569,6 +572,13 @@ impl ServerPlugin {
             ));
             registry.register_http_handler(raw_handler).await?;
 
+            // Register raw text editor handler
+            let editor_handler = Arc::new(editor_handlers::RawEditorHandler::new(
+                "/editor".to_string(),
+                current_file.to_path_buf(),
+            ));
+            registry.register_http_handler(editor_handler).await?;
+
             // Register static file handler for assets in the same directory
             if let Some(base_dir) = current_file.parent() {
                 let static_handler = Arc::new(handlers::StaticHandler::new(
@@ -608,6 +618,12 @@ impl ServerPlugin {
             registry
                 .register_websocket_handler(live_reload_handler.clone())
                 .await?;
+
+            // Register editor WebSocket handler
+            let editor_ws_handler = Arc::new(editor_handlers::EditorWebSocketHandler::new(
+                "/ws/editor".to_string(),
+            ));
+            registry.register_websocket_handler(editor_ws_handler).await?;
 
             // Create and register a file change event handler that will trigger reloads
             let reload_event_handler = Arc::new(LiveReloadEventHandler {
