@@ -264,10 +264,9 @@ impl HttpHandler for RawEditorHandler {
     async fn handle(&self, _request: HttpRequest) -> Result<HttpResponse> {
         let session_id = Uuid::new_v4().to_string();
 
-        let content = match tokio::fs::read_to_string(&self.markdown_file).await {
-            Ok(content) => content,
-            Err(_) => String::new(),
-        };
+        let content = tokio::fs::read_to_string(&self.markdown_file)
+            .await
+            .unwrap_or_default();
 
         let session = EditorSession {
             session_id: session_id.clone(),
