@@ -421,7 +421,7 @@ impl MarkdownHandler {
                 if let Some(end) = html[content_start..].find("</h1>") {
                     let title = &html[content_start..content_start + end];
                     // Strip HTML tags from title
-                    let title = title.replace(|c: char| c == '<' || c == '>', "");
+                    let title = title.replace(['<', '>'], "");
                     return Some(title.trim().to_string());
                 }
             }
