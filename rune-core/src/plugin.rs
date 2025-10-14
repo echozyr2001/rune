@@ -17,7 +17,7 @@ use crate::state::StateManager;
 
 /// Core plugin trait that all plugins must implement
 #[async_trait]
-pub trait Plugin: Send + Sync {
+pub trait Plugin: Send + Sync + 'static {
     /// Get the plugin name
     fn name(&self) -> &str;
 
@@ -44,6 +44,12 @@ pub trait Plugin: Send + Sync {
     fn provided_services(&self) -> Vec<&str> {
         Vec::new()
     }
+
+    /// For downcasting
+    fn as_any(&self) -> &dyn Any;
+
+    /// For downcasting
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// Context provided to plugins during initialization with shared resources access
@@ -725,6 +731,20 @@ impl PluginRegistry {
     /// Get mutable plugin information
     pub fn get_plugin_info_mut(&mut self, name: &str) -> Option<&mut PluginInfo> {
         self.plugin_info.get_mut(name)
+    }
+
+    /// Get a mutable reference to a plugin by name
+    pub fn get_plugin_mut(&mut self, name: &str) -> Option<&mut dyn Plugin> {
+        self.plugins
+            .get_mut(name)
+            .map(|boxed_plugin| boxed_plugin.as_mut())
+    }
+
+    /// Get a reference to a plugin by name
+    pub fn get_plugin(&self, name: &str) -> Option<&dyn Plugin> {
+        self.plugins
+            .get(name)
+            .map(|boxed_plugin| boxed_plugin.as_ref())
     }
 
     /// List all loaded plugins

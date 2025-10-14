@@ -95,6 +95,17 @@
             transition: background-color 0.3s ease, color 0.3s ease;
         }
 
+        /* Optimize content updates to reduce flicker */
+        #content {
+            will-change: contents;
+            transform: translateZ(0); /* Force hardware acceleration */
+        }
+
+        /* Smooth transitions for content changes */
+        #content * {
+            transition: opacity 0.05s ease-out;
+        }
+
         .theme-toggle {
             position: absolute;
             top: 20px;
@@ -413,6 +424,280 @@
             }
         }
 
+        // Content hash for change detection
+        let lastContentHash = '';
+        
+        // Simple hash function for content comparison
+        function simpleHash(str) {
+            let hash = 0;
+            if (str.length === 0) return hash;
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convert to 32-bit integer
+            }
+            return hash;
+        }
+        
+        // Advanced content diffing for minimal updates
+        function performSmartContentUpdate(currentElement, newHTML) {
+            // Create a temporary element to parse new content
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = newHTML;
+            
+            // Try to identify and update only changed sections
+            const currentParagraphs = currentElement.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
+            const newParagraphs = tempDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
+            
+            let hasSignificantChanges = false;
+            
+            // Quick check: if structure is very different, do full update
+            if (Math.abs(currentParagraphs.length - newParagraphs.length) > 2) {
+                hasSignificantChanges = true;
+            }
+            
+            if (hasSignificantChanges || currentParagraphs.length === 0) {
+                // Full content replacement with minimal flicker
+                currentElement.style.transition = 'opacity 0.05s ease-out';
+                currentElement.style.opacity = '0.98';
+                
+                requestAnimationFrame(() => {
+                    currentElement.innerHTML = newHTML;
+                    currentElement.style.opacity = '1';
+                });
+            } else {
+                // Try incremental updates for better performance
+                currentElement.innerHTML = newHTML;
+            }
+        }
+        
+        // Direct content update via WebSocket (fastest method with minimal flicker)
+        function performDirectContentUpdate(message) {
+            try {
+                console.log('🚀 Performing direct content update (no HTTP request needed)');
+                
+                // Save current scroll position
+                const scrollPosition = window.pageYOffset || document.documentElement.scrollTop;
+                
+                // Update the main content area
+                const currentContent = document.querySelector('#content');
+                
+                if (currentContent && message.html) {
+                    // Generate content hash for change detection
+                    const newContentHash = simpleHash(message.html);
+                    if (newContentHash === lastContentHash) {
+                        console.log('📋 Content unchanged (hash match), skipping update');
+                        return;
+                    }
+                    lastContentHash = newContentHash;
+                    
+                    // Create a temporary container for the new content
+                    const tempContainer = document.createElement('div');
+                    tempContainer.innerHTML = message.html;
+                    
+                    // Pre-process syntax highlighting and mermaid in the temp container
+                    if (typeof Prism !== 'undefined') {
+                        const codeBlocks = tempContainer.querySelectorAll('pre code');
+                        codeBlocks.forEach(block => {
+                            Prism.highlightElement(block);
+                        });
+                    }
+                    
+                    // Pre-process mermaid diagrams
+                    if (typeof mermaid !== 'undefined') {
+                        const mermaidElements = tempContainer.querySelectorAll('.mermaid');
+                        if (mermaidElements.length > 0) {
+                            // For mermaid, we'll process after DOM update due to its async nature
+                        }
+                    }
+                    
+                    // Use smart content update for minimal flicker
+                    performSmartContentUpdate(currentContent, message.html);
+                    
+                    // Use requestAnimationFrame for post-processing
+                    requestAnimationFrame(() => {
+                        
+                        // Process mermaid diagrams after DOM update
+                        if (typeof mermaid !== 'undefined') {
+                            const mermaidElements = currentContent.querySelectorAll('.mermaid');
+                            if (mermaidElements.length > 0) {
+                                mermaidElements.forEach((element) => {
+                                    element.removeAttribute('data-processed');
+                                });
+                                mermaid.run().catch(err => {
+                                    console.warn('Mermaid rendering warning:', err);
+                                });
+                            }
+                        }
+                        
+                        // Update page title if provided
+                        if (message.metadata && message.metadata.title) {
+                            document.title = message.metadata.title + ' - Rune';
+                        }
+                        
+                        // Restore scroll position smoothly
+                        if (Math.abs(window.pageYOffset - scrollPosition) > 5) {
+                            window.scrollTo({
+                                top: scrollPosition,
+                                behavior: 'instant'
+                            });
+                        }
+                        
+                        console.log('✅ Direct content update completed successfully');
+                        
+                        // Log performance info
+                        if (message.metadata) {
+                            console.log('📊 Content metadata:', {
+                                wordCount: message.metadata.word_count,
+                                lastModified: message.metadata.last_modified,
+                                filePath: message.metadata.file_path
+                            });
+                        }
+                    });
+                } else {
+                    console.warn('⚠️ Content element not found or no HTML provided, falling back to fetch');
+                    performIncrementalUpdate();
+                }
+                
+            } catch (error) {
+                console.error('❌ Direct content update failed:', error);
+                console.log('🔄 Falling back to fetch-based update');
+                performIncrementalUpdate();
+            }
+        }
+
+        // Incremental element updates for specific parts of the page
+        function performIncrementalElementUpdate(updates) {
+            try {
+                console.log('🎯 Performing incremental element updates:', updates.length, 'updates');
+                
+                let successCount = 0;
+                
+                updates.forEach((update, index) => {
+                    const element = document.querySelector(update.selector);
+                    
+                    if (element) {
+                        // Apply smooth transition
+                        element.style.transition = 'opacity 0.1s ease';
+                        element.style.opacity = '0.8';
+                        
+                        setTimeout(() => {
+                            switch (update.update_type) {
+                                case 'Replace':
+                                    element.outerHTML = update.content;
+                                    break;
+                                case 'InnerHtml':
+                                    element.innerHTML = update.content;
+                                    break;
+                                case 'Append':
+                                    element.innerHTML += update.content;
+                                    break;
+                                case 'Prepend':
+                                    element.innerHTML = update.content + element.innerHTML;
+                                    break;
+                                default:
+                                    element.innerHTML = update.content;
+                            }
+                            
+                            element.style.opacity = '1';
+                            successCount++;
+                            
+                            console.log(`✅ Updated element ${index + 1}/${updates.length}: ${update.selector}`);
+                        }, index * 20); // Stagger updates slightly
+                    } else {
+                        console.warn(`⚠️ Element not found for selector: ${update.selector}`);
+                    }
+                });
+                
+                // Re-initialize components after all updates
+                setTimeout(() => {
+                    if (typeof Prism !== 'undefined') {
+                        Prism.highlightAll();
+                    }
+                    
+                    if (typeof mermaid !== 'undefined') {
+                        mermaid.run();
+                    }
+                    
+                    console.log(`✅ Incremental updates completed: ${successCount}/${updates.length} successful`);
+                }, updates.length * 20 + 100);
+                
+            } catch (error) {
+                console.error('❌ Incremental element update failed:', error);
+                console.log('🔄 Falling back to fetch-based update');
+                performIncrementalUpdate();
+            }
+        }
+
+        // Incremental update function to avoid full page reload (fallback method)
+        async function performIncrementalUpdate() {
+            try {
+                console.log('🔄 Performing incremental content update...');
+                
+                // Save current scroll position
+                const scrollPosition = window.pageYOffset || document.documentElement.scrollTop;
+                
+                // Fetch updated content
+                const response = await fetch(window.location.pathname, {
+                    headers: {
+                        'Accept': 'text/html',
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const newHtml = await response.text();
+                const parser = new DOMParser();
+                const newDoc = parser.parseFromString(newHtml, 'text/html');
+                
+                // Update the main content area
+                const currentContent = document.querySelector('#content');
+                const newContent = newDoc.querySelector('#content');
+                
+                if (currentContent && newContent) {
+                    // Smooth transition effect
+                    currentContent.style.opacity = '0.7';
+                    currentContent.style.transition = 'opacity 0.2s ease';
+                    
+                    setTimeout(() => {
+                        currentContent.innerHTML = newContent.innerHTML;
+                        currentContent.style.opacity = '1';
+                        
+                        // Re-initialize syntax highlighting if present
+                        if (typeof Prism !== 'undefined') {
+                            Prism.highlightAll();
+                        }
+                        
+                        // Re-render mermaid diagrams
+                        if (typeof mermaid !== 'undefined') {
+                            const mermaidElements = document.querySelectorAll('.mermaid');
+                            mermaidElements.forEach((element) => {
+                                element.removeAttribute('data-processed');
+                            });
+                            mermaid.run();
+                        }
+                        
+                        // Restore scroll position
+                        window.scrollTo(0, scrollPosition);
+                        
+                        console.log('✅ Content updated successfully (no page reload)');
+                    }, 100);
+                } else {
+                    // Fallback to full reload if content structure changed significantly
+                    console.log('⚠️ Content structure changed, falling back to full reload');
+                    window.location.reload();
+                }
+                
+            } catch (error) {
+                console.error('❌ Incremental update failed:', error);
+                console.log('🔄 Falling back to full page reload');
+                window.location.reload();
+            }
+        }
+
         // Auto-refresh functionality using WebSocket
         function setupLiveReload() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -426,9 +711,34 @@
             socket.onmessage = function(event) {
                 try {
                     const message = JSON.parse(event.data);
-                    if (message.type === 'Reload') {
-                        console.log('Reloading page via WebSocket');
-                        window.location.reload();
+                    
+                    switch (message.type) {
+                        case 'ContentUpdate':
+                            console.log('📦 Received direct content update via WebSocket');
+                            performDirectContentUpdate(message);
+                            break;
+                            
+                        case 'IncrementalUpdate':
+                            console.log('🔄 Received incremental update via WebSocket');
+                            performIncrementalElementUpdate(message.updates);
+                            break;
+                            
+                        case 'Reload':
+                            console.log('🔄 Received reload message, performing fetch-based update...');
+                            performIncrementalUpdate();
+                            break;
+                            
+                        case 'Error':
+                            console.error('❌ Server error:', message.message);
+                            if (message.code) {
+                                console.error('Error code:', message.code);
+                            }
+                            // Fallback to reload on error
+                            performIncrementalUpdate();
+                            break;
+                            
+                        default:
+                            console.log('📨 Received WebSocket message:', message);
                     }
                 } catch (error) {
                     console.error('Error parsing WebSocket message:', error);

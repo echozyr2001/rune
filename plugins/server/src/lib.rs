@@ -45,6 +45,9 @@ pub trait HttpHandler: Send + Sync {
         0
     }
 
+    /// For downcasting to concrete types
+    fn as_any(&self) -> &dyn std::any::Any;
+
     /// Check if this handler can process the given request
     fn can_handle(&self, path: &str, method: &Method) -> bool {
         self.method() == *method && self.matches_path(path)
@@ -412,6 +415,18 @@ impl HandlerRegistry {
 
         info!("Cleared all registered handlers");
     }
+
+    /// Get all HTTP handlers (for content pushing optimization)
+    pub async fn get_all_http_handlers(&self) -> Vec<Arc<dyn HttpHandler>> {
+        let handlers = self.http_handlers.read().await;
+        handlers.clone()
+    }
+
+    /// Get all WebSocket handlers
+    pub async fn get_all_websocket_handlers(&self) -> Vec<Arc<dyn WebSocketHandler>> {
+        let handlers = self.websocket_handlers.read().await;
+        handlers.clone()
+    }
 }
 
 /// Server plugin configuration
@@ -580,6 +595,7 @@ impl ServerPlugin {
             let reload_event_handler = Arc::new(LiveReloadEventHandler {
                 reload_sender,
                 live_reload_handler,
+                handler_registry: registry.clone(),
             });
 
             event_bus
@@ -879,14 +895,11 @@ impl Plugin for ServerPlugin {
 
         self.handler_registry = Some(registry.clone());
 
-        // Channel to signal the file path to the simple monitor
-        let (monitor_tx, mut monitor_rx) = tokio::sync::mpsc::channel(1);
-
         // Subscribe to system events to handle file changes
+        // Note: We no longer start our own file monitoring - we rely on the FileWatcher plugin
         let server_event_handler = Arc::new(ServerEventHandler {
             plugin_context: context.clone(),
             handler_registry: registry.clone(),
-            simple_monitor_starter: monitor_tx,
         });
 
         context
@@ -894,48 +907,7 @@ impl Plugin for ServerPlugin {
             .subscribe_system_events(server_event_handler)
             .await?;
 
-        // Spawn a task that waits for the file path and then starts monitoring
-        let event_bus = context.event_bus.clone();
-        tokio::spawn(async move {
-            if let Some(file_path) = monitor_rx.recv().await {
-                info!(
-                    "Starting simple file monitoring for: {}",
-                    file_path.display()
-                );
-
-                let mut last_modified = std::fs::metadata(&file_path)
-                    .and_then(|m| m.modified())
-                    .unwrap_or_else(|_| std::time::SystemTime::now());
-
-                let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-
-                loop {
-                    interval.tick().await;
-
-                    if let Ok(metadata) = std::fs::metadata(&file_path) {
-                        if let Ok(modified) = metadata.modified() {
-                            if modified > last_modified {
-                                last_modified = modified;
-
-                                info!(
-                                    "File changed, publishing reload event: {}",
-                                    file_path.display()
-                                );
-
-                                let change_event = rune_core::event::SystemEvent::file_changed(
-                                    file_path.clone(),
-                                    rune_core::event::ChangeType::Modified,
-                                );
-
-                                if let Err(e) = event_bus.publish_system_event(change_event).await {
-                                    error!("Failed to publish file change event: {}", e);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        info!("Server plugin will rely on FileWatcher plugin for file change detection");
 
         // Register core handlers
         self.register_core_handlers(context).await?;
@@ -1010,6 +982,14 @@ impl Plugin for ServerPlugin {
     fn provided_services(&self) -> Vec<&str> {
         vec!["http_server", "websocket_server", "handler_registry"]
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 impl Default for ServerPlugin {
@@ -1022,7 +1002,6 @@ impl Default for ServerPlugin {
 struct ServerEventHandler {
     plugin_context: PluginContext,
     handler_registry: Arc<HandlerRegistry>,
-    simple_monitor_starter: tokio::sync::mpsc::Sender<std::path::PathBuf>,
 }
 
 #[async_trait]
@@ -1038,9 +1017,8 @@ impl rune_core::event::SystemEventHandler for ServerEventHandler {
                     change_type
                 );
 
-                // Try to start the simple monitor. This will only work the first time.
-                // We ignore the error in case the receiver has been dropped.
-                let _ = self.simple_monitor_starter.try_send(path.clone());
+                // File monitoring is now handled by the FileWatcher plugin
+                info!("File change detected, relying on FileWatcher plugin for monitoring");
 
                 // Always try to register handlers for the file - this is idempotent
                 // The registry will handle duplicates appropriately
@@ -1059,10 +1037,11 @@ impl rune_core::event::SystemEventHandler for ServerEventHandler {
     }
 }
 
-/// Event handler for live reload functionality
+/// Event handler for live reload functionality with content pushing
 struct LiveReloadEventHandler {
     reload_sender: broadcast::Sender<handlers::ServerMessage>,
     live_reload_handler: Arc<handlers::LiveReloadHandler>,
+    handler_registry: Arc<HandlerRegistry>,
 }
 
 #[async_trait]
@@ -1070,11 +1049,24 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
     async fn handle_system_event(&self, event: &rune_core::event::SystemEvent) -> Result<()> {
         match event {
             rune_core::event::SystemEvent::FileChanged { path, .. } => {
-                info!("File changed, triggering live reload: {}", path.display());
+                info!(
+                    "File changed, triggering optimized content push: {}",
+                    path.display()
+                );
 
-                // Broadcast reload message to all connected WebSocket clients
-                if let Err(e) = self.live_reload_handler.broadcast_reload().await {
-                    warn!("Failed to broadcast reload message: {}", e);
+                // Try to push content directly via WebSocket first
+                if let Err(e) = self.try_push_content_update(path).await {
+                    warn!(
+                        "Failed to push content update, falling back to reload: {}",
+                        e
+                    );
+
+                    // Fallback to traditional reload
+                    if let Err(e) = self.live_reload_handler.broadcast_reload().await {
+                        warn!("Failed to broadcast reload message: {}", e);
+                    }
+                } else {
+                    info!("Successfully pushed content update via WebSocket");
                 }
             }
             _ => {
@@ -1086,6 +1078,46 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
 
     fn handler_name(&self) -> &str {
         "live-reload-event-handler"
+    }
+}
+
+impl LiveReloadEventHandler {
+    /// Try to push content update directly via WebSocket
+    async fn try_push_content_update(&self, file_path: &std::path::Path) -> Result<()> {
+        // Check if this is a markdown file
+        if let Some(extension) = file_path.extension() {
+            if extension == "md" || extension == "markdown" {
+                // Get all HTTP handlers from the registry
+                let handlers = self.handler_registry.get_all_http_handlers().await;
+
+                // Look for a markdown handler that matches this file
+                for handler in &handlers {
+                    // Try to downcast to MarkdownHandler
+                    if let Some(markdown_handler) =
+                        handler.as_any().downcast_ref::<handlers::MarkdownHandler>()
+                    {
+                        // Check if this handler is for the same file
+                        let handler_file = markdown_handler
+                            .base_dir()
+                            .join(file_path.file_name().unwrap_or_default());
+
+                        if handler_file == file_path {
+                            // Use the markdown handler to render and push content
+                            markdown_handler
+                                .render_and_push_content(&self.live_reload_handler)
+                                .await?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we can't find a specific handler or it's not a markdown file,
+        // return an error to trigger fallback
+        Err(RuneError::Server(
+            "No suitable handler found for content pushing".to_string(),
+        ))
     }
 }
 

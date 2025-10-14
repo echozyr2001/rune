@@ -114,6 +114,14 @@ impl Plugin for MarkdownRenderer {
     fn provided_services(&self) -> Vec<&str> {
         vec!["markdown-rendering", "content-rendering"]
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 #[async_trait]
@@ -274,6 +282,14 @@ impl Plugin for MermaidRenderer {
     fn provided_services(&self) -> Vec<&str> {
         vec!["mermaid-rendering", "diagram-rendering"]
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 #[async_trait]
@@ -410,6 +426,14 @@ impl Plugin for ThemeAwareRenderer {
 
     fn provided_services(&self) -> Vec<&str> {
         vec!["theme-aware-rendering"]
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 
@@ -598,5 +622,13 @@ impl Plugin for RendererPlugin {
 
     fn provided_services(&self) -> Vec<&str> {
         vec!["content-rendering", "renderer-registry"]
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }

@@ -38,6 +38,14 @@ impl Plugin for MockRendererPlugin {
         info!("MockRendererPlugin: Shutdown complete");
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -71,6 +79,14 @@ impl Plugin for MockServerPlugin {
         info!("MockServerPlugin: Shutdown complete");
         Ok(())
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
 }
 
 #[derive(Debug)]
@@ -103,6 +119,14 @@ impl Plugin for MockFileWatcherPlugin {
         tokio::time::sleep(Duration::from_millis(60)).await; // Simulate cleanup work
         info!("MockFileWatcherPlugin: Shutdown complete");
         Ok(())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
     }
 }
 
