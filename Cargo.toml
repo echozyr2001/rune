@@ -2,6 +2,7 @@
 members = [
     "rune-core",
     "rune-cli",
+    "plugins/editor",
     "plugins/file-watcher",
     "plugins/renderer",
     "plugins/server",
