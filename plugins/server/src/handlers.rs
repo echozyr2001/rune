@@ -350,6 +350,11 @@ impl MarkdownHandler {
         &self.base_dir
     }
 
+    /// Get the markdown file path
+    pub fn markdown_file(&self) -> &Path {
+        &self.markdown_file
+    }
+
     /// Render content and push via WebSocket (optimized version)
     pub async fn render_and_push_content(
         &self,
