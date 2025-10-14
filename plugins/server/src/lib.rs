@@ -45,6 +45,9 @@ pub trait HttpHandler: Send + Sync {
         0
     }
 
+    /// For downcasting to concrete types
+    fn as_any(&self) -> &dyn std::any::Any;
+
     /// Check if this handler can process the given request
     fn can_handle(&self, path: &str, method: &Method) -> bool {
         self.method() == *method && self.matches_path(path)
@@ -412,6 +415,18 @@ impl HandlerRegistry {
 
         info!("Cleared all registered handlers");
     }
+
+    /// Get all HTTP handlers (for content pushing optimization)
+    pub async fn get_all_http_handlers(&self) -> Vec<Arc<dyn HttpHandler>> {
+        let handlers = self.http_handlers.read().await;
+        handlers.clone()
+    }
+
+    /// Get all WebSocket handlers
+    pub async fn get_all_websocket_handlers(&self) -> Vec<Arc<dyn WebSocketHandler>> {
+        let handlers = self.websocket_handlers.read().await;
+        handlers.clone()
+    }
 }
 
 /// Server plugin configuration
@@ -580,6 +595,7 @@ impl ServerPlugin {
             let reload_event_handler = Arc::new(LiveReloadEventHandler {
                 reload_sender,
                 live_reload_handler,
+                handler_registry: registry.clone(),
             });
 
             event_bus
@@ -1021,10 +1037,11 @@ impl rune_core::event::SystemEventHandler for ServerEventHandler {
     }
 }
 
-/// Event handler for live reload functionality
+/// Event handler for live reload functionality with content pushing
 struct LiveReloadEventHandler {
     reload_sender: broadcast::Sender<handlers::ServerMessage>,
     live_reload_handler: Arc<handlers::LiveReloadHandler>,
+    handler_registry: Arc<HandlerRegistry>,
 }
 
 #[async_trait]
@@ -1032,11 +1049,24 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
     async fn handle_system_event(&self, event: &rune_core::event::SystemEvent) -> Result<()> {
         match event {
             rune_core::event::SystemEvent::FileChanged { path, .. } => {
-                info!("File changed, triggering live reload: {}", path.display());
+                info!(
+                    "File changed, triggering optimized content push: {}",
+                    path.display()
+                );
 
-                // Broadcast reload message to all connected WebSocket clients
-                if let Err(e) = self.live_reload_handler.broadcast_reload().await {
-                    warn!("Failed to broadcast reload message: {}", e);
+                // Try to push content directly via WebSocket first
+                if let Err(e) = self.try_push_content_update(path).await {
+                    warn!(
+                        "Failed to push content update, falling back to reload: {}",
+                        e
+                    );
+
+                    // Fallback to traditional reload
+                    if let Err(e) = self.live_reload_handler.broadcast_reload().await {
+                        warn!("Failed to broadcast reload message: {}", e);
+                    }
+                } else {
+                    info!("Successfully pushed content update via WebSocket");
                 }
             }
             _ => {
@@ -1048,6 +1078,46 @@ impl rune_core::event::SystemEventHandler for LiveReloadEventHandler {
 
     fn handler_name(&self) -> &str {
         "live-reload-event-handler"
+    }
+}
+
+impl LiveReloadEventHandler {
+    /// Try to push content update directly via WebSocket
+    async fn try_push_content_update(&self, file_path: &std::path::Path) -> Result<()> {
+        // Check if this is a markdown file
+        if let Some(extension) = file_path.extension() {
+            if extension == "md" || extension == "markdown" {
+                // Get all HTTP handlers from the registry
+                let handlers = self.handler_registry.get_all_http_handlers().await;
+
+                // Look for a markdown handler that matches this file
+                for handler in &handlers {
+                    // Try to downcast to MarkdownHandler
+                    if let Some(markdown_handler) =
+                        handler.as_any().downcast_ref::<handlers::MarkdownHandler>()
+                    {
+                        // Check if this handler is for the same file
+                        let handler_file = markdown_handler
+                            .base_dir()
+                            .join(file_path.file_name().unwrap_or_default());
+
+                        if handler_file == file_path {
+                            // Use the markdown handler to render and push content
+                            markdown_handler
+                                .render_and_push_content(&self.live_reload_handler)
+                                .await?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we can't find a specific handler or it's not a markdown file,
+        // return an error to trigger fallback
+        Err(RuneError::Server(
+            "No suitable handler found for content pushing".to_string(),
+        ))
     }
 }
 

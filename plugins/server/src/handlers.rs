@@ -181,6 +181,10 @@ impl HttpHandler for StaticHandler {
     fn matches_path(&self, path: &str) -> bool {
         path.starts_with(&self.path_pattern)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Markdown handler for serving rendered markdown content with live reload
@@ -345,6 +349,100 @@ impl MarkdownHandler {
     pub fn base_dir(&self) -> &Path {
         &self.base_dir
     }
+
+    /// Render content and push via WebSocket (optimized version)
+    pub async fn render_and_push_content(
+        &self,
+        websocket_handler: &LiveReloadHandler,
+    ) -> Result<()> {
+        // Check if content needs refresh
+        let needs_refresh = self.refresh_if_needed().await?;
+
+        if needs_refresh {
+            let state = self.cached_state.read().await;
+
+            // Extract just the content part (without full HTML template)
+            let content_html = self.extract_content_only().await?;
+
+            // Create metadata
+            let metadata = ContentMetadata {
+                title: self.extract_title_from_content(&content_html),
+                last_modified: Some(state.last_modified),
+                file_path: Some(self.markdown_file.to_string_lossy().to_string()),
+                word_count: Some(self.count_words(&content_html)),
+            };
+
+            // Push content update via WebSocket
+            websocket_handler
+                .broadcast_content_update(content_html, None, Some(metadata))
+                .await?;
+
+            info!(
+                "Pushed content update via WebSocket for: {:?}",
+                self.markdown_file
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Extract only the content part without the full HTML template
+    async fn extract_content_only(&self) -> Result<String> {
+        let content = fs::read_to_string(&self.markdown_file)
+            .map_err(|e| RuneError::Server(format!("Failed to read markdown file: {}", e)))?;
+
+        if let Some(registry) = &self.renderer_registry {
+            let context = RenderContext::new(
+                self.markdown_file.clone(),
+                self.base_dir.clone(),
+                "catppuccin-mocha".to_string(),
+            );
+
+            let result = registry.render_with_pipeline(&content, &context).await?;
+            Ok(result.html)
+        } else {
+            // Fallback rendering
+            let mut options = markdown::Options::gfm();
+            options.compile.allow_dangerous_html = true;
+
+            let html = markdown::to_html_with_options(&content, &options)
+                .map_err(|e| RuneError::Server(format!("Markdown parsing failed: {}", e)))?;
+
+            Ok(html)
+        }
+    }
+
+    /// Extract title from HTML content
+    fn extract_title_from_content(&self, html: &str) -> Option<String> {
+        // Simple regex to extract first h1 tag
+        if let Some(start) = html.find("<h1") {
+            if let Some(content_start) = html[start..].find('>') {
+                let content_start = start + content_start + 1;
+                if let Some(end) = html[content_start..].find("</h1>") {
+                    let title = &html[content_start..content_start + end];
+                    // Strip HTML tags from title
+                    let title = title.replace(|c: char| c == '<' || c == '>', "");
+                    return Some(title.trim().to_string());
+                }
+            }
+        }
+        None
+    }
+
+    /// Count words in HTML content (approximate)
+    fn count_words(&self, html: &str) -> usize {
+        // Simple word count by removing HTML tags and counting words
+        let text = html.chars().fold(String::new(), |mut acc, c| {
+            if c == '<' {
+                acc.push(' ');
+            } else if c != '>' {
+                acc.push(c);
+            }
+            acc
+        });
+
+        text.split_whitespace().count()
+    }
 }
 
 #[async_trait]
@@ -382,6 +480,10 @@ impl HttpHandler for MarkdownHandler {
 
     fn priority(&self) -> i32 {
         10 // Higher priority than static handler
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -432,6 +534,10 @@ impl HttpHandler for RawMarkdownHandler {
 
     fn priority(&self) -> i32 {
         10 // Higher priority than static handler
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -523,6 +629,10 @@ impl HttpHandler for ThemeApiHandler {
     fn can_handle(&self, path: &str, method: &Method) -> bool {
         path == self.path_pattern && *method == Method::POST
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Theme info handler for GET requests to theme API
@@ -608,6 +718,10 @@ impl HttpHandler for ThemeInfoHandler {
 
     fn can_handle(&self, path: &str, method: &Method) -> bool {
         path == self.path_pattern && *method == Method::GET
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
@@ -879,6 +993,10 @@ impl HttpHandler for ThemeAssetHandler {
     fn matches_path(&self, path: &str) -> bool {
         path.starts_with(&self.path_pattern)
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Mermaid.js handler for serving the Mermaid JavaScript library
@@ -939,6 +1057,10 @@ impl HttpHandler for MermaidHandler {
     fn priority(&self) -> i32 {
         5 // High priority for specific asset
     }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Client message types for WebSocket communication
@@ -953,8 +1075,55 @@ pub enum ClientMessage {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
+    /// Traditional reload message (fallback)
     Reload,
+    /// Direct content update with rendered HTML
+    ContentUpdate {
+        html: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        css: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        metadata: Option<ContentMetadata>,
+    },
+    /// Incremental content update for specific elements
+    IncrementalUpdate { updates: Vec<ElementUpdate> },
+    /// Pong response
     Pong,
+    /// Error message
+    Error {
+        message: String,
+        code: Option<String>,
+    },
+}
+
+/// Metadata about the content
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ContentMetadata {
+    pub title: Option<String>,
+    pub last_modified: Option<SystemTime>,
+    pub file_path: Option<String>,
+    pub word_count: Option<usize>,
+}
+
+/// Individual element update for incremental updates
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct ElementUpdate {
+    pub selector: String,
+    pub content: String,
+    pub update_type: UpdateType,
+}
+
+/// Type of update to perform on an element
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum UpdateType {
+    /// Replace the entire content
+    Replace,
+    /// Replace only the inner HTML
+    InnerHtml,
+    /// Append to existing content
+    Append,
+    /// Prepend to existing content
+    Prepend,
 }
 
 /// WebSocket handler for live reload functionality
@@ -999,6 +1168,55 @@ impl LiveReloadHandler {
                 .send(ServerMessage::Reload)
                 .map_err(|e| RuneError::Server(format!("Failed to broadcast reload: {}", e)))?;
             info!("Broadcasted reload message to WebSocket clients");
+        }
+        Ok(())
+    }
+
+    /// Broadcast rendered content directly to all connected clients
+    pub async fn broadcast_content_update(
+        &self,
+        html: String,
+        css: Option<String>,
+        metadata: Option<ContentMetadata>,
+    ) -> Result<()> {
+        if let Some(sender) = self.get_reload_sender().await {
+            let message = ServerMessage::ContentUpdate {
+                html,
+                css,
+                metadata,
+            };
+            sender.send(message).map_err(|e| {
+                RuneError::Server(format!("Failed to broadcast content update: {}", e))
+            })?;
+            info!("Broadcasted content update to WebSocket clients");
+        }
+        Ok(())
+    }
+
+    /// Broadcast incremental updates to specific elements
+    pub async fn broadcast_incremental_update(&self, updates: Vec<ElementUpdate>) -> Result<()> {
+        if let Some(sender) = self.get_reload_sender().await {
+            let update_count = updates.len();
+            let message = ServerMessage::IncrementalUpdate { updates };
+            sender.send(message).map_err(|e| {
+                RuneError::Server(format!("Failed to broadcast incremental update: {}", e))
+            })?;
+            info!(
+                "Broadcasted incremental update to WebSocket clients ({} updates)",
+                update_count
+            );
+        }
+        Ok(())
+    }
+
+    /// Broadcast error message to all connected clients
+    pub async fn broadcast_error(&self, message: String, code: Option<String>) -> Result<()> {
+        if let Some(sender) = self.get_reload_sender().await {
+            let error_message = ServerMessage::Error { message, code };
+            sender
+                .send(error_message)
+                .map_err(|e| RuneError::Server(format!("Failed to broadcast error: {}", e)))?;
+            warn!("Broadcasted error message to WebSocket clients");
         }
         Ok(())
     }
