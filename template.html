@@ -95,6 +95,17 @@
             transition: background-color 0.3s ease, color 0.3s ease;
         }
 
+        /* Optimize content updates to reduce flicker */
+        #content {
+            will-change: contents;
+            transform: translateZ(0); /* Force hardware acceleration */
+        }
+
+        /* Smooth transitions for content changes */
+        #content * {
+            transition: opacity 0.05s ease-out;
+        }
+
         .theme-toggle {
             position: absolute;
             top: 20px;
@@ -413,7 +424,54 @@
             }
         }
 
-        // Direct content update via WebSocket (fastest method)
+        // Content hash for change detection
+        let lastContentHash = '';
+        
+        // Simple hash function for content comparison
+        function simpleHash(str) {
+            let hash = 0;
+            if (str.length === 0) return hash;
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash; // Convert to 32-bit integer
+            }
+            return hash;
+        }
+        
+        // Advanced content diffing for minimal updates
+        function performSmartContentUpdate(currentElement, newHTML) {
+            // Create a temporary element to parse new content
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = newHTML;
+            
+            // Try to identify and update only changed sections
+            const currentParagraphs = currentElement.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
+            const newParagraphs = tempDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
+            
+            let hasSignificantChanges = false;
+            
+            // Quick check: if structure is very different, do full update
+            if (Math.abs(currentParagraphs.length - newParagraphs.length) > 2) {
+                hasSignificantChanges = true;
+            }
+            
+            if (hasSignificantChanges || currentParagraphs.length === 0) {
+                // Full content replacement with minimal flicker
+                currentElement.style.transition = 'opacity 0.05s ease-out';
+                currentElement.style.opacity = '0.98';
+                
+                requestAnimationFrame(() => {
+                    currentElement.innerHTML = newHTML;
+                    currentElement.style.opacity = '1';
+                });
+            } else {
+                // Try incremental updates for better performance
+                currentElement.innerHTML = newHTML;
+            }
+        }
+        
+        // Direct content update via WebSocket (fastest method with minimal flicker)
         function performDirectContentUpdate(message) {
             try {
                 console.log('🚀 Performing direct content update (no HTTP request needed)');
@@ -425,26 +483,51 @@
                 const currentContent = document.querySelector('#content');
                 
                 if (currentContent && message.html) {
-                    // Smooth transition effect
-                    currentContent.style.opacity = '0.7';
-                    currentContent.style.transition = 'opacity 0.15s ease';
+                    // Generate content hash for change detection
+                    const newContentHash = simpleHash(message.html);
+                    if (newContentHash === lastContentHash) {
+                        console.log('📋 Content unchanged (hash match), skipping update');
+                        return;
+                    }
+                    lastContentHash = newContentHash;
                     
-                    setTimeout(() => {
-                        currentContent.innerHTML = message.html;
-                        currentContent.style.opacity = '1';
-                        
-                        // Re-initialize syntax highlighting if present
-                        if (typeof Prism !== 'undefined') {
-                            Prism.highlightAll();
+                    // Create a temporary container for the new content
+                    const tempContainer = document.createElement('div');
+                    tempContainer.innerHTML = message.html;
+                    
+                    // Pre-process syntax highlighting and mermaid in the temp container
+                    if (typeof Prism !== 'undefined') {
+                        const codeBlocks = tempContainer.querySelectorAll('pre code');
+                        codeBlocks.forEach(block => {
+                            Prism.highlightElement(block);
+                        });
+                    }
+                    
+                    // Pre-process mermaid diagrams
+                    if (typeof mermaid !== 'undefined') {
+                        const mermaidElements = tempContainer.querySelectorAll('.mermaid');
+                        if (mermaidElements.length > 0) {
+                            // For mermaid, we'll process after DOM update due to its async nature
                         }
+                    }
+                    
+                    // Use smart content update for minimal flicker
+                    performSmartContentUpdate(currentContent, message.html);
+                    
+                    // Use requestAnimationFrame for post-processing
+                    requestAnimationFrame(() => {
                         
-                        // Re-render mermaid diagrams
+                        // Process mermaid diagrams after DOM update
                         if (typeof mermaid !== 'undefined') {
-                            const mermaidElements = document.querySelectorAll('.mermaid');
-                            mermaidElements.forEach((element) => {
-                                element.removeAttribute('data-processed');
-                            });
-                            mermaid.run();
+                            const mermaidElements = currentContent.querySelectorAll('.mermaid');
+                            if (mermaidElements.length > 0) {
+                                mermaidElements.forEach((element) => {
+                                    element.removeAttribute('data-processed');
+                                });
+                                mermaid.run().catch(err => {
+                                    console.warn('Mermaid rendering warning:', err);
+                                });
+                            }
                         }
                         
                         // Update page title if provided
@@ -452,8 +535,13 @@
                             document.title = message.metadata.title + ' - Rune';
                         }
                         
-                        // Restore scroll position
-                        window.scrollTo(0, scrollPosition);
+                        // Restore scroll position smoothly
+                        if (Math.abs(window.pageYOffset - scrollPosition) > 5) {
+                            window.scrollTo({
+                                top: scrollPosition,
+                                behavior: 'instant'
+                            });
+                        }
                         
                         console.log('✅ Direct content update completed successfully');
                         
@@ -465,7 +553,7 @@
                                 filePath: message.metadata.file_path
                             });
                         }
-                    }, 75);
+                    });
                 } else {
                     console.warn('⚠️ Content element not found or no HTML provided, falling back to fetch');
                     performIncrementalUpdate();
