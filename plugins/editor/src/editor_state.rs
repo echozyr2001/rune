@@ -5,20 +5,15 @@ use std::time::SystemTime;
 use uuid::Uuid;
 
 /// Editor modes for different editing experiences
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum EditorMode {
     /// Raw text editing mode - plain markdown text
+    #[default]
     Raw,
     /// Live WYSIWYG mode - inline rendering with editing
     Live,
     /// Preview-only mode - read-only rendered view
     Preview,
-}
-
-impl Default for EditorMode {
-    fn default() -> Self {
-        EditorMode::Raw
-    }
 }
 
 impl std::fmt::Display for EditorMode {
@@ -60,19 +55,19 @@ impl CursorPosition {
     /// Check if this position is valid for the given content
     pub fn is_valid_for_content(&self, content: &str) -> bool {
         let lines: Vec<&str> = content.lines().collect();
-        
+
         // Check line bounds
         if self.line >= lines.len() {
             return false;
         }
-        
+
         // Check column bounds for the specific line
         if let Some(line_content) = lines.get(self.line) {
             if self.column > line_content.len() {
                 return false;
             }
         }
-        
+
         // Check absolute position bounds
         self.absolute <= content.len()
     }
@@ -80,20 +75,20 @@ impl CursorPosition {
     /// Calculate absolute position from line and column
     pub fn calculate_absolute(content: &str, line: usize, column: usize) -> Option<usize> {
         let lines: Vec<&str> = content.lines().collect();
-        
+
         if line >= lines.len() {
             return None;
         }
-        
+
         let mut absolute = 0;
-        
+
         // Add lengths of all previous lines (including newlines)
         for i in 0..line {
             if let Some(line_content) = lines.get(i) {
                 absolute += line_content.len() + 1; // +1 for newline
             }
         }
-        
+
         // Add column offset in current line
         if let Some(current_line) = lines.get(line) {
             if column <= current_line.len() {
@@ -112,21 +107,21 @@ impl CursorPosition {
         if absolute > content.len() {
             return None;
         }
-        
+
         let mut current_pos = 0;
         let lines: Vec<&str> = content.lines().collect();
-        
+
         for (line_idx, line_content) in lines.iter().enumerate() {
             let line_end = current_pos + line_content.len();
-            
+
             if absolute <= line_end {
                 let column = absolute - current_pos;
                 return Some((line_idx, column));
             }
-            
+
             current_pos = line_end + 1; // +1 for newline
         }
-        
+
         // Handle position at very end of document
         if absolute == content.len() {
             if let Some(last_line_idx) = lines.len().checked_sub(1) {
@@ -135,7 +130,7 @@ impl CursorPosition {
                 }
             }
         }
-        
+
         None
     }
 
@@ -190,7 +185,7 @@ impl EditorState {
     /// Create a new editor state for a session
     pub fn new(session_id: Uuid, content: String) -> Self {
         let content_hash = Self::calculate_content_hash(&content);
-        
+
         Self {
             current_mode: EditorMode::default(),
             cursor_position: CursorPosition::start(),
@@ -211,12 +206,12 @@ impl EditorState {
         self.is_dirty = content_hash != self.original_content_hash;
         self.content = new_content;
         self.last_edit_time = SystemTime::now();
-        
+
         // Reset auto-save timer
         if self.auto_save_enabled {
             self.auto_save_timer = Some(SystemTime::now());
         }
-        
+
         // Update cursor position to ensure it's still valid
         self.cursor_position.update_absolute(&self.content);
     }
@@ -231,7 +226,7 @@ impl EditorState {
                 self.content.len()
             ));
         }
-        
+
         self.cursor_position = position;
         Ok(())
     }
@@ -257,13 +252,13 @@ impl EditorState {
         if !self.auto_save_enabled || !self.is_dirty {
             return false;
         }
-        
+
         if let Some(timer_start) = self.auto_save_timer {
             if let Ok(elapsed) = timer_start.elapsed() {
                 return elapsed.as_secs() >= 2; // 2-second delay as per requirements
             }
         }
-        
+
         false
     }
 
@@ -291,7 +286,7 @@ impl EditorState {
     fn calculate_content_hash(content: &str) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
         format!("{:x}", hasher.finish())
@@ -302,7 +297,7 @@ impl EditorState {
         let lines = self.content.lines().count();
         let characters = self.content.len();
         let words = self.content.split_whitespace().count();
-        
+
         ContentStats {
             lines,
             characters,
@@ -326,12 +321,12 @@ mod tests {
     #[test]
     fn test_cursor_position_validation() {
         let content = "line 1\nline 2\nline 3";
-        
+
         // Valid positions
         assert!(CursorPosition::new(0, 0, 0).is_valid_for_content(content));
         assert!(CursorPosition::new(1, 6, 13).is_valid_for_content(content));
         assert!(CursorPosition::new(2, 6, 20).is_valid_for_content(content));
-        
+
         // Invalid positions
         assert!(!CursorPosition::new(3, 0, 0).is_valid_for_content(content)); // Line out of bounds
         assert!(!CursorPosition::new(0, 10, 0).is_valid_for_content(content)); // Column out of bounds
@@ -341,7 +336,7 @@ mod tests {
     #[test]
     fn test_absolute_position_calculation() {
         let content = "line 1\nline 2\nline 3";
-        
+
         assert_eq!(CursorPosition::calculate_absolute(content, 0, 0), Some(0));
         assert_eq!(CursorPosition::calculate_absolute(content, 0, 6), Some(6));
         assert_eq!(CursorPosition::calculate_absolute(content, 1, 0), Some(7));
@@ -353,13 +348,31 @@ mod tests {
     #[test]
     fn test_line_column_calculation() {
         let content = "line 1\nline 2\nline 3";
-        
-        assert_eq!(CursorPosition::calculate_line_column(content, 0), Some((0, 0)));
-        assert_eq!(CursorPosition::calculate_line_column(content, 6), Some((0, 6)));
-        assert_eq!(CursorPosition::calculate_line_column(content, 7), Some((1, 0)));
-        assert_eq!(CursorPosition::calculate_line_column(content, 13), Some((1, 6)));
-        assert_eq!(CursorPosition::calculate_line_column(content, 14), Some((2, 0)));
-        assert_eq!(CursorPosition::calculate_line_column(content, 20), Some((2, 6)));
+
+        assert_eq!(
+            CursorPosition::calculate_line_column(content, 0),
+            Some((0, 0))
+        );
+        assert_eq!(
+            CursorPosition::calculate_line_column(content, 6),
+            Some((0, 6))
+        );
+        assert_eq!(
+            CursorPosition::calculate_line_column(content, 7),
+            Some((1, 0))
+        );
+        assert_eq!(
+            CursorPosition::calculate_line_column(content, 13),
+            Some((1, 6))
+        );
+        assert_eq!(
+            CursorPosition::calculate_line_column(content, 14),
+            Some((2, 0))
+        );
+        assert_eq!(
+            CursorPosition::calculate_line_column(content, 20),
+            Some((2, 6))
+        );
     }
 
     #[test]
@@ -367,18 +380,18 @@ mod tests {
         let session_id = Uuid::new_v4();
         let original_content = "original content".to_string();
         let mut state = EditorState::new(session_id, original_content.clone());
-        
+
         // Initially not dirty
         assert!(!state.is_dirty);
-        
+
         // Update with same content - should not be dirty
         state.update_content(original_content.clone());
         assert!(!state.is_dirty);
-        
+
         // Update with different content - should be dirty
         state.update_content("modified content".to_string());
         assert!(state.is_dirty);
-        
+
         // Mark as saved - should not be dirty
         state.mark_saved();
         assert!(!state.is_dirty);
@@ -388,17 +401,17 @@ mod tests {
     fn test_auto_save_timing() {
         let session_id = Uuid::new_v4();
         let mut state = EditorState::new(session_id, "content".to_string());
-        
+
         // Initially should not auto-save (not dirty)
         assert!(!state.should_auto_save());
-        
+
         // Make dirty but no timer set
         state.update_content("new content".to_string());
         assert!(state.is_dirty);
-        
+
         // Should not auto-save immediately
         assert!(!state.should_auto_save());
-        
+
         // Simulate timer expiry by setting timer to past time
         state.auto_save_timer = Some(SystemTime::now() - std::time::Duration::from_secs(3));
         assert!(state.should_auto_save());

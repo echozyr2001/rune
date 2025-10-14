@@ -5,10 +5,10 @@
 //! This plugin provides a modular web server with pluggable handlers and middleware.
 //! It supports dynamic route registration, handler hot-reloading, and multiple protocols.
 
-pub mod handlers;
 pub mod editor_handlers;
+pub mod handlers;
 
-pub use editor_handlers::{RawEditorHandler, EditorWebSocketHandler};
+pub use editor_handlers::{EditorWebSocketHandler, RawEditorHandler};
 
 use async_trait::async_trait;
 use axum::{
@@ -623,7 +623,9 @@ impl ServerPlugin {
             let editor_ws_handler = Arc::new(editor_handlers::EditorWebSocketHandler::new(
                 "/ws/editor".to_string(),
             ));
-            registry.register_websocket_handler(editor_ws_handler).await?;
+            registry
+                .register_websocket_handler(editor_ws_handler)
+                .await?;
 
             // Create and register a file change event handler that will trigger reloads
             let reload_event_handler = Arc::new(LiveReloadEventHandler {

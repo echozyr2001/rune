@@ -1,6 +1,8 @@
 //! Editor handlers for raw text editing interface
 
-use crate::{HttpHandler, HttpRequest, HttpResponse, WebSocketConnection, WebSocketHandler, WebSocketMessage};
+use crate::{
+    HttpHandler, HttpRequest, HttpResponse, WebSocketConnection, WebSocketHandler, WebSocketMessage,
+};
 use async_trait::async_trait;
 use axum::http::Method;
 use rune_core::{Result, RuneError};
@@ -29,23 +31,12 @@ pub struct EditorSession {
 }
 
 /// Cursor position in the editor
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CursorPosition {
     pub line: usize,
     pub column: usize,
     pub selection_start: Option<usize>,
     pub selection_end: Option<usize>,
-}
-
-impl Default for CursorPosition {
-    fn default() -> Self {
-        Self {
-            line: 0,
-            column: 0,
-            selection_start: None,
-            selection_end: None,
-        }
-    }
 }
 
 /// Editor API messages for WebSocket communication
@@ -59,14 +50,9 @@ pub enum EditorMessage {
         cursor_position: CursorPosition,
     },
     #[serde(rename = "save_request")]
-    SaveRequest {
-        session_id: String,
-    },
+    SaveRequest { session_id: String },
     #[serde(rename = "mode_switch")]
-    ModeSwitch {
-        session_id: String,
-        mode: String,
-    },
+    ModeSwitch { session_id: String, mode: String },
 }
 
 impl RawEditorHandler {
@@ -85,8 +71,9 @@ impl RawEditorHandler {
             .replace('&', "&amp;")
             .replace('<', "&lt;")
             .replace('>', "&gt;");
-        
-        let filename = self.markdown_file
+
+        let filename = self
+            .markdown_file
             .file_name()
             .unwrap_or_default()
             .to_string_lossy();
@@ -276,12 +263,12 @@ impl HttpHandler for RawEditorHandler {
 
     async fn handle(&self, _request: HttpRequest) -> Result<HttpResponse> {
         let session_id = Uuid::new_v4().to_string();
-        
+
         let content = match tokio::fs::read_to_string(&self.markdown_file).await {
             Ok(content) => content,
             Err(_) => String::new(),
         };
-        
+
         let session = EditorSession {
             session_id: session_id.clone(),
             file_path: self.markdown_file.clone(),
@@ -289,12 +276,12 @@ impl HttpHandler for RawEditorHandler {
             cursor_position: CursorPosition::default(),
             is_dirty: false,
         };
-        
+
         {
             let mut sessions = self.editor_sessions.write().await;
             sessions.insert(session_id.clone(), session);
         }
-        
+
         let html = self.generate_editor_html(&content, &session_id);
         Ok(HttpResponse::html(&html))
     }
@@ -322,34 +309,40 @@ impl EditorWebSocketHandler {
             editor_sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    
+
     /// Handle content update message
-    async fn handle_content_update(&self, session_id: &str, content: String, _cursor_position: CursorPosition) -> Result<()> {
+    async fn handle_content_update(
+        &self,
+        session_id: &str,
+        content: String,
+        _cursor_position: CursorPosition,
+    ) -> Result<()> {
         let mut sessions = self.editor_sessions.write().await;
-        
+
         if let Some(session) = sessions.get_mut(session_id) {
             session.content = content;
             session.is_dirty = true;
         }
-        
+
         Ok(())
     }
-    
+
     /// Handle save request
     async fn handle_save_request(&self, session_id: &str) -> Result<()> {
         let sessions = self.editor_sessions.read().await;
-        
+
         if let Some(session) = sessions.get(session_id) {
-            tokio::fs::write(&session.file_path, &session.content).await
+            tokio::fs::write(&session.file_path, &session.content)
+                .await
                 .map_err(|e| RuneError::Server(format!("Failed to save file: {}", e)))?;
-            
+
             drop(sessions);
             let mut sessions = self.editor_sessions.write().await;
             if let Some(session) = sessions.get_mut(session_id) {
                 session.is_dirty = false;
             }
         }
-        
+
         Ok(())
     }
 }
@@ -365,34 +358,41 @@ impl WebSocketHandler for EditorWebSocketHandler {
         Ok(())
     }
 
-    async fn on_message(&self, connection: &WebSocketConnection, message: WebSocketMessage) -> Result<()> {
+    async fn on_message(
+        &self,
+        connection: &WebSocketConnection,
+        message: WebSocketMessage,
+    ) -> Result<()> {
         if let WebSocketMessage::Text(text) = message {
             match serde_json::from_str::<EditorMessage>(&text) {
-                Ok(editor_msg) => {
-                    match editor_msg {
-                        EditorMessage::ContentUpdate { session_id, content, cursor_position } => {
-                            self.handle_content_update(&session_id, content, cursor_position).await?;
-                        }
-                        EditorMessage::SaveRequest { session_id } => {
-                            self.handle_save_request(&session_id).await?;
-                            
-                            let response = serde_json::json!({
-                                "type": "save_complete",
-                                "session_id": session_id
-                            });
-                            connection.send_text(response.to_string()).await?;
-                        }
-                        EditorMessage::ModeSwitch { session_id, mode } => {
-                            tracing::info!("Mode switch requested: {} -> {}", session_id, mode);
-                        }
+                Ok(editor_msg) => match editor_msg {
+                    EditorMessage::ContentUpdate {
+                        session_id,
+                        content,
+                        cursor_position,
+                    } => {
+                        self.handle_content_update(&session_id, content, cursor_position)
+                            .await?;
                     }
-                }
+                    EditorMessage::SaveRequest { session_id } => {
+                        self.handle_save_request(&session_id).await?;
+
+                        let response = serde_json::json!({
+                            "type": "save_complete",
+                            "session_id": session_id
+                        });
+                        connection.send_text(response.to_string()).await?;
+                    }
+                    EditorMessage::ModeSwitch { session_id, mode } => {
+                        tracing::info!("Mode switch requested: {} -> {}", session_id, mode);
+                    }
+                },
                 Err(e) => {
                     tracing::warn!("Failed to parse editor message: {}", e);
                 }
             }
         }
-        
+
         Ok(())
     }
 

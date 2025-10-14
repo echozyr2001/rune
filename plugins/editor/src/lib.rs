@@ -226,14 +226,9 @@ pub enum EditorEvent {
         cursor_position: CursorPosition,
     },
     /// Editor mode changed
-    ModeChanged {
-        session_id: Uuid,
-        mode: EditorMode,
-    },
+    ModeChanged { session_id: Uuid, mode: EditorMode },
     /// Save was requested
-    SaveRequested {
-        session_id: Uuid,
-    },
+    SaveRequested { session_id: Uuid },
     /// Save completed
     SaveCompleted {
         session_id: Uuid,
@@ -246,18 +241,14 @@ pub enum EditorEvent {
         position: CursorPosition,
     },
     /// Auto-save triggered
-    AutoSaveTriggered {
-        session_id: Uuid,
-    },
+    AutoSaveTriggered { session_id: Uuid },
     /// Session created
     SessionCreated {
         session_id: Uuid,
         file_path: PathBuf,
     },
     /// Session closed
-    SessionClosed {
-        session_id: Uuid,
-    },
+    SessionClosed { session_id: Uuid },
 }
 
 /// Editor-specific errors
@@ -265,19 +256,19 @@ pub enum EditorEvent {
 pub enum EditorError {
     #[error("Session not found: {0}")]
     SessionNotFound(Uuid),
-    
+
     #[error("File operation failed: {0}")]
     FileOperationFailed(String),
-    
+
     #[error("Invalid cursor position: line {line}, column {column}")]
     InvalidCursorPosition { line: usize, column: usize },
-    
+
     #[error("Mode switch failed: {0}")]
     ModeSwitchFailed(String),
-    
+
     #[error("Auto-save failed: {0}")]
     AutoSaveFailed(String),
-    
+
     #[error("Content synchronization failed: {0}")]
     ContentSyncFailed(String),
 }
