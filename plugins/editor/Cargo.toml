@@ -1,0 +1,23 @@
+[package]
+name = "rune-editor"
+version = "0.1.0"
+edition = "2021"
+description = "Editor plugin for Rune with WYSIWYG capabilities"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rune-core = { path = "../../rune-core" }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+thiserror = "1.0"
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
