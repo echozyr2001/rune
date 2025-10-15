@@ -22,8 +22,12 @@ pub mod syntax_parser;
 pub use cursor_manager::{CursorManager, ElementMapping, MappingStats, PositionMapping};
 pub use editor_state::{CursorPosition, EditorMode, EditorState};
 pub use inline_renderer::{InlineRenderer, MarkdownInlineRenderer, RenderedElement};
-pub use live_editor::{ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult};
-pub use render_trigger::{RenderTriggerDetector, RenderTriggerHandler, TriggerConfig, TriggerEvent};
+pub use live_editor::{
+    ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
+};
+pub use render_trigger::{
+    RenderTriggerDetector, RenderTriggerHandler, TriggerConfig, TriggerEvent,
+};
 pub use session::{EditorSession, SessionManager};
 pub use syntax_parser::{
     MarkdownSyntaxParser, PositionRange, SyntaxElement, SyntaxElementType, SyntaxParser,
@@ -70,7 +74,11 @@ pub trait EditorPlugin: Plugin {
     async fn set_auto_save(&self, session_id: Uuid, enabled: bool) -> Result<()>;
 
     /// Handle space key press for render trigger detection
-    async fn handle_space_key(&self, session_id: Uuid, cursor_position: CursorPosition) -> Result<bool>;
+    async fn handle_space_key(
+        &self,
+        session_id: Uuid,
+        cursor_position: CursorPosition,
+    ) -> Result<bool>;
 
     /// Check if any sessions should trigger rendering
     async fn check_render_triggers(&self) -> Result<Vec<Uuid>>;
@@ -268,7 +276,11 @@ impl EditorPlugin for RuneEditorPlugin {
         manager.set_auto_save(session_id, enabled).await
     }
 
-    async fn handle_space_key(&self, session_id: Uuid, cursor_position: CursorPosition) -> Result<bool> {
+    async fn handle_space_key(
+        &self,
+        session_id: Uuid,
+        cursor_position: CursorPosition,
+    ) -> Result<bool> {
         let mut manager = self.session_manager.write().await;
         manager.handle_space_key(session_id, cursor_position).await
     }
@@ -304,7 +316,9 @@ impl EditorPlugin for RuneEditorPlugin {
         trigger_events: Vec<TriggerEvent>,
     ) -> Result<LiveEditorResult> {
         let mut manager = self.session_manager.write().await;
-        manager.process_live_content(session_id, trigger_events).await
+        manager
+            .process_live_content(session_id, trigger_events)
+            .await
     }
 
     async fn handle_click_to_edit(
@@ -313,7 +327,9 @@ impl EditorPlugin for RuneEditorPlugin {
         click_position: usize,
     ) -> Result<ClickToEditResult> {
         let mut manager = self.session_manager.write().await;
-        manager.handle_click_to_edit(session_id, click_position).await
+        manager
+            .handle_click_to_edit(session_id, click_position)
+            .await
     }
 
     async fn handle_mode_switch(
@@ -323,7 +339,9 @@ impl EditorPlugin for RuneEditorPlugin {
         to_mode: EditorMode,
     ) -> Result<ModeSwitchResult> {
         let mut manager = self.session_manager.write().await;
-        manager.handle_mode_switch(session_id, from_mode, to_mode).await
+        manager
+            .handle_mode_switch(session_id, from_mode, to_mode)
+            .await
     }
 
     async fn update_active_element_content(
@@ -332,7 +350,9 @@ impl EditorPlugin for RuneEditorPlugin {
         new_content: String,
     ) -> Result<bool> {
         let mut manager = self.session_manager.write().await;
-        manager.update_active_element_content(session_id, new_content).await
+        manager
+            .update_active_element_content(session_id, new_content)
+            .await
     }
 }
 

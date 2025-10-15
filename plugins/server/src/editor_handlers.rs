@@ -400,14 +400,21 @@ impl WebSocketHandler for EditorWebSocketHandler {
                     EditorMessage::ModeSwitch { session_id, mode } => {
                         tracing::info!("Mode switch requested: {} -> {}", session_id, mode);
                     }
-                    EditorMessage::ClickToEdit { session_id, click_position } => {
-                        tracing::debug!("Click-to-edit at position {} for session {}", click_position, session_id);
-                        
+                    EditorMessage::ClickToEdit {
+                        session_id,
+                        click_position,
+                    } => {
+                        tracing::debug!(
+                            "Click-to-edit at position {} for session {}",
+                            click_position,
+                            session_id
+                        );
+
                         // In a real implementation, you would:
                         // 1. Get the editor plugin from the plugin context
                         // 2. Call handle_click_to_edit
                         // 3. Send back the result to update the UI
-                        
+
                         let response = serde_json::json!({
                             "type": "click_to_edit_result",
                             "session_id": session_id,
@@ -415,14 +422,21 @@ impl WebSocketHandler for EditorWebSocketHandler {
                         });
                         let _ = connection.send_text(response.to_string()).await;
                     }
-                    EditorMessage::TriggerRender { session_id, trigger_events } => {
-                        tracing::debug!("Render trigger for session {} with events: {:?}", session_id, trigger_events);
-                        
+                    EditorMessage::TriggerRender {
+                        session_id,
+                        trigger_events,
+                    } => {
+                        tracing::debug!(
+                            "Render trigger for session {} with events: {:?}",
+                            session_id,
+                            trigger_events
+                        );
+
                         // In a real implementation, you would:
                         // 1. Convert trigger_events to TriggerEvent enum
                         // 2. Call process_live_content on the editor plugin
                         // 3. Send back the rendered content
-                        
+
                         let response = serde_json::json!({
                             "type": "live_content_update",
                             "session_id": session_id,
@@ -430,13 +444,16 @@ impl WebSocketHandler for EditorWebSocketHandler {
                         });
                         let _ = connection.send_text(response.to_string()).await;
                     }
-                    EditorMessage::UpdateElement { session_id, element_content } => {
+                    EditorMessage::UpdateElement {
+                        session_id,
+                        element_content,
+                    } => {
                         tracing::debug!("Update element content for session {}", session_id);
-                        
+
                         // In a real implementation, you would:
                         // 1. Call update_active_element_content on the editor plugin
                         // 2. Trigger re-rendering if successful
-                        
+
                         let response = serde_json::json!({
                             "type": "element_update_result",
                             "session_id": session_id,

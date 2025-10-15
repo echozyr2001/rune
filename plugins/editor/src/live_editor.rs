@@ -402,7 +402,8 @@ mod tests {
         let cursor_position = CursorPosition::new(0, 0, 0);
         let trigger_events = vec![TriggerEvent::SpaceKey];
 
-        let result = integration.process_content_with_cursor(content, &cursor_position, &trigger_events);
+        let result =
+            integration.process_content_with_cursor(content, &cursor_position, &trigger_events);
 
         assert!(!result.syntax_elements.is_empty());
         assert!(!result.rendered_elements.is_empty());
@@ -432,11 +433,8 @@ mod tests {
         let mut integration = LiveEditorIntegration::new();
         let cursor_position = CursorPosition::new(0, 5, 5);
 
-        let result = integration.handle_mode_switch(
-            EditorMode::Raw,
-            EditorMode::Live,
-            &cursor_position,
-        );
+        let result =
+            integration.handle_mode_switch(EditorMode::Raw, EditorMode::Live, &cursor_position);
 
         assert!(result.needs_rerender);
         // Cursor position should be preserved or mapped appropriately
@@ -445,16 +443,14 @@ mod tests {
     #[test]
     fn test_active_element_management() {
         let mut integration = LiveEditorIntegration::new();
-        
+
         // Simulate having parsed elements
-        integration.current_elements = vec![
-            crate::syntax_parser::SyntaxElement::new(
-                crate::syntax_parser::SyntaxElementType::Bold,
-                PositionRange::new(0, 8),
-                "**bold**".to_string(),
-                "bold".to_string(),
-            )
-        ];
+        integration.current_elements = vec![crate::syntax_parser::SyntaxElement::new(
+            crate::syntax_parser::SyntaxElementType::Bold,
+            PositionRange::new(0, 8),
+            "**bold**".to_string(),
+            "bold".to_string(),
+        )];
 
         // Set element as active
         integration.set_active_element(0);
