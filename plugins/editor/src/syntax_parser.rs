@@ -297,8 +297,8 @@ impl MarkdownSyntaxParser {
         }
 
         // Find closing backtick
-        for i in 1..chars.len() {
-            if chars[i] == '`' {
+        for (i, &ch) in chars.iter().enumerate().skip(1) {
+            if ch == '`' {
                 let raw_content = chars[0..i + 1].iter().collect::<String>();
                 let rendered_content = chars[1..i].iter().collect::<String>();
 
@@ -339,8 +339,8 @@ impl MarkdownSyntaxParser {
 
         // Find closing bracket for link text
         let mut text_end = None;
-        for i in 1..chars.len() {
-            if chars[i] == ']' {
+        for (i, &ch) in chars.iter().enumerate().skip(1) {
+            if ch == ']' {
                 text_end = Some(i);
                 break;
             }
@@ -355,8 +355,8 @@ impl MarkdownSyntaxParser {
 
         // Find closing parenthesis for URL
         let mut url_end = None;
-        for i in (text_end + 2)..chars.len() {
-            if chars[i] == ')' {
+        for (i, &ch) in chars.iter().enumerate().skip(text_end + 2) {
+            if ch == ')' {
                 url_end = Some(i);
                 break;
             }
