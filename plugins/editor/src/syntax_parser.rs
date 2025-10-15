@@ -218,7 +218,7 @@ impl MarkdownSyntaxParser {
     /// Parse inline formatting (bold, italic, code)
     fn parse_inline_formatting(&self, content: &str, offset: usize) -> Vec<SyntaxElement> {
         let mut elements = Vec::new();
-        let mut chars = content.char_indices().peekable();
+        let chars = content.char_indices().peekable();
 
         for (i, ch) in chars {
             match ch {
@@ -317,7 +317,7 @@ impl MarkdownSyntaxParser {
     /// Parse links
     fn parse_links(&self, content: &str, offset: usize) -> Vec<SyntaxElement> {
         let mut elements = Vec::new();
-        let mut chars = content.char_indices().peekable();
+        let chars = content.char_indices().peekable();
 
         for (i, ch) in chars {
             if ch == '[' {
