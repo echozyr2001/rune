@@ -1,6 +1,11 @@
 //! Session management for editor instances
 
 use crate::editor_state::{CursorPosition, EditorMode, EditorState};
+use crate::live_editor::{
+    ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
+};
+use crate::render_trigger::{RenderTriggerDetector, TriggerConfig, TriggerEvent};
+use crate::syntax_parser::{MarkdownSyntaxParser, SyntaxParser};
 use crate::EditorError;
 use rune_core::{PluginContext, Result};
 use serde::{Deserialize, Serialize};
@@ -12,7 +17,7 @@ use tokio::fs;
 use uuid::Uuid;
 
 /// Individual editor session representing one file being edited
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EditorSession {
     /// Unique session identifier
     pub id: Uuid,
@@ -28,6 +33,12 @@ pub struct EditorSession {
     pub is_active: bool,
     /// Auto-save configuration for this session
     pub auto_save_config: AutoSaveConfig,
+    /// Render trigger detection system
+    pub render_trigger_detector: RenderTriggerDetector,
+    /// Syntax parser for detecting block elements
+    pub syntax_parser: MarkdownSyntaxParser,
+    /// Live editor integration for rendering
+    pub live_editor: LiveEditorIntegration,
 }
 
 impl EditorSession {
@@ -55,6 +66,9 @@ impl EditorSession {
             last_accessed: now,
             is_active: true,
             auto_save_config: AutoSaveConfig::default(),
+            render_trigger_detector: RenderTriggerDetector::with_defaults(),
+            syntax_parser: MarkdownSyntaxParser::new(),
+            live_editor: LiveEditorIntegration::new(),
         })
     }
 
@@ -105,6 +119,71 @@ impl EditorSession {
     /// Get time since last access
     pub fn idle_time(&self) -> Option<std::time::Duration> {
         self.last_accessed.elapsed().ok()
+    }
+
+    /// Handle space key press for render trigger detection
+    pub fn handle_space_key(&mut self, cursor_position: CursorPosition) -> bool {
+        self.render_trigger_detector
+            .detect_space_key(cursor_position)
+    }
+
+    /// Handle cursor movement for render trigger detection
+    pub fn handle_cursor_movement(&mut self, new_position: CursorPosition) -> bool {
+        self.render_trigger_detector
+            .detect_cursor_movement(new_position)
+    }
+
+    /// Handle content change for render trigger detection
+    pub fn handle_content_change(
+        &mut self,
+        new_content: &str,
+        change_start: usize,
+        change_end: usize,
+    ) -> bool {
+        // Parse syntax elements to detect block completion
+        let syntax_elements = self.syntax_parser.parse_document(new_content);
+        let cursor_pos = self.state.cursor_position.clone();
+
+        // Check for block completion
+        let block_completed = self.render_trigger_detector.detect_block_completion(
+            new_content,
+            cursor_pos,
+            &syntax_elements,
+        );
+
+        // Check for general content change
+        let content_changed = self.render_trigger_detector.detect_content_change(
+            new_content,
+            change_start,
+            change_end,
+        );
+
+        block_completed || content_changed
+    }
+
+    /// Check if rendering should be triggered (debounced)
+    pub fn should_trigger_render(&mut self) -> bool {
+        self.render_trigger_detector.should_trigger_render()
+    }
+
+    /// Get pending trigger events
+    pub fn get_pending_trigger_events(&self) -> &[TriggerEvent] {
+        self.render_trigger_detector.get_pending_events()
+    }
+
+    /// Clear pending trigger events
+    pub fn clear_trigger_events(&mut self) {
+        self.render_trigger_detector.clear_pending_events()
+    }
+
+    /// Force immediate render trigger
+    pub fn force_render_trigger(&mut self) -> bool {
+        self.render_trigger_detector.force_trigger()
+    }
+
+    /// Update render trigger configuration
+    pub fn update_trigger_config(&mut self, config: TriggerConfig) {
+        self.render_trigger_detector.update_config(config)
     }
 }
 
@@ -265,7 +344,18 @@ impl SessionManager {
             .get_mut(&session_id)
             .ok_or(EditorError::SessionNotFound(session_id))?;
 
-        session.state_mut().update_content(content);
+        let old_content_len = session.state.content.len();
+        session.state_mut().update_content(content.clone());
+
+        // Detect render triggers for content change
+        let change_start = 0;
+        let change_end = old_content_len;
+        let should_render = session.handle_content_change(&content, change_start, change_end);
+
+        if should_render {
+            tracing::debug!("Content change triggered render for session {}", session_id);
+        }
+
         session.touch();
 
         tracing::debug!("Updated content for session {}", session_id);
@@ -302,6 +392,17 @@ impl SessionManager {
                 line: position.line,
                 column: position.column,
             })?;
+
+        // Detect render triggers for cursor movement
+        let should_render = session.handle_cursor_movement(position);
+
+        if should_render {
+            tracing::debug!(
+                "Cursor movement triggered render for session {}",
+                session_id
+            );
+        }
+
         session.touch();
 
         Ok(())
@@ -446,6 +547,206 @@ impl SessionManager {
             dirty_sessions,
             auto_save_enabled,
         }
+    }
+
+    /// Handle space key press for a session
+    pub async fn handle_space_key(
+        &mut self,
+        session_id: Uuid,
+        cursor_position: CursorPosition,
+    ) -> Result<bool> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let should_render = session.handle_space_key(cursor_position);
+        session.touch();
+
+        if should_render {
+            tracing::debug!("Space key triggered render for session {}", session_id);
+        }
+
+        Ok(should_render)
+    }
+
+    /// Check if any session should trigger rendering
+    pub async fn check_render_triggers(&mut self) -> Result<Vec<Uuid>> {
+        let mut sessions_to_render = Vec::new();
+
+        for (session_id, session) in &mut self.sessions {
+            if session.should_trigger_render() {
+                sessions_to_render.push(*session_id);
+                tracing::debug!("Session {} should trigger render", session_id);
+            }
+        }
+
+        Ok(sessions_to_render)
+    }
+
+    /// Get pending trigger events for a session
+    pub async fn get_pending_trigger_events(&self, session_id: Uuid) -> Result<Vec<TriggerEvent>> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        Ok(session.get_pending_trigger_events().to_vec())
+    }
+
+    /// Clear trigger events for a session
+    pub async fn clear_trigger_events(&mut self, session_id: Uuid) -> Result<()> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        session.clear_trigger_events();
+        Ok(())
+    }
+
+    /// Force render trigger for a session
+    pub async fn force_render_trigger(&mut self, session_id: Uuid) -> Result<bool> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let triggered = session.force_render_trigger();
+        session.touch();
+
+        if triggered {
+            tracing::debug!("Forced render trigger for session {}", session_id);
+        }
+
+        Ok(triggered)
+    }
+
+    /// Update render trigger configuration for a session
+    pub async fn update_trigger_config(
+        &mut self,
+        session_id: Uuid,
+        config: TriggerConfig,
+    ) -> Result<()> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        session.update_trigger_config(config);
+        session.touch();
+
+        tracing::debug!("Updated trigger config for session {}", session_id);
+        Ok(())
+    }
+
+    /// Process content with live rendering integration
+    pub async fn process_live_content(
+        &mut self,
+        session_id: Uuid,
+        trigger_events: Vec<TriggerEvent>,
+    ) -> Result<LiveEditorResult> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let result = session.live_editor.process_content_with_cursor(
+            &session.state.content,
+            &session.state.cursor_position,
+            &trigger_events,
+        );
+
+        session.touch();
+        tracing::debug!("Processed live content for session {}", session_id);
+        Ok(result)
+    }
+
+    /// Handle click-to-edit functionality
+    pub async fn handle_click_to_edit(
+        &mut self,
+        session_id: Uuid,
+        click_position: usize,
+    ) -> Result<ClickToEditResult> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let result = session
+            .live_editor
+            .handle_click_to_edit(click_position, &session.state.content);
+
+        session.touch();
+        tracing::debug!(
+            "Handled click-to-edit at position {} for session {}",
+            click_position,
+            session_id
+        );
+        Ok(result)
+    }
+
+    /// Handle mode switching with cursor position preservation
+    pub async fn handle_mode_switch(
+        &mut self,
+        session_id: Uuid,
+        from_mode: EditorMode,
+        to_mode: EditorMode,
+    ) -> Result<ModeSwitchResult> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let result = session.live_editor.handle_mode_switch(
+            from_mode.clone(),
+            to_mode.clone(),
+            &session.state.cursor_position,
+        );
+
+        // Update the session state with the new mode and cursor position
+        session.state_mut().switch_mode(to_mode.clone());
+        if let Err(e) = session
+            .state_mut()
+            .update_cursor_position(result.preserved_cursor_position.clone())
+        {
+            tracing::warn!("Failed to update cursor position after mode switch: {}", e);
+        }
+
+        session.touch();
+        tracing::debug!(
+            "Handled mode switch from {:?} to {:?} for session {}",
+            from_mode,
+            to_mode,
+            session_id
+        );
+        Ok(result)
+    }
+
+    /// Update content of the currently active element
+    pub async fn update_active_element_content(
+        &mut self,
+        session_id: Uuid,
+        new_content: String,
+    ) -> Result<bool> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let updated = session
+            .live_editor
+            .update_active_element_content(&new_content);
+
+        if updated {
+            // Mark session as dirty since content was updated
+            let current_content = session.state.content.clone();
+            session.state_mut().update_content(current_content);
+            session.touch();
+            tracing::debug!("Updated active element content for session {}", session_id);
+        }
+
+        Ok(updated)
     }
 }
 

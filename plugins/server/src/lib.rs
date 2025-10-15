@@ -8,7 +8,7 @@
 pub mod editor_handlers;
 pub mod handlers;
 
-pub use editor_handlers::{EditorWebSocketHandler, RawEditorHandler};
+pub use editor_handlers::{EditorWebSocketHandler, LiveEditorHandler, RawEditorHandler};
 
 use async_trait::async_trait;
 use axum::{

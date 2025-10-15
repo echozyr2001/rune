@@ -14,12 +14,20 @@ use uuid::Uuid;
 pub mod cursor_manager;
 pub mod editor_state;
 pub mod inline_renderer;
+pub mod live_editor;
+pub mod render_trigger;
 pub mod session;
 pub mod syntax_parser;
 
 pub use cursor_manager::{CursorManager, ElementMapping, MappingStats, PositionMapping};
 pub use editor_state::{CursorPosition, EditorMode, EditorState};
 pub use inline_renderer::{InlineRenderer, MarkdownInlineRenderer, RenderedElement};
+pub use live_editor::{
+    ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
+};
+pub use render_trigger::{
+    RenderTriggerDetector, RenderTriggerHandler, TriggerConfig, TriggerEvent,
+};
 pub use session::{EditorSession, SessionManager};
 pub use syntax_parser::{
     MarkdownSyntaxParser, PositionRange, SyntaxElement, SyntaxElementType, SyntaxParser,
@@ -64,6 +72,57 @@ pub trait EditorPlugin: Plugin {
 
     /// Enable or disable auto-save for a session
     async fn set_auto_save(&self, session_id: Uuid, enabled: bool) -> Result<()>;
+
+    /// Handle space key press for render trigger detection
+    async fn handle_space_key(
+        &self,
+        session_id: Uuid,
+        cursor_position: CursorPosition,
+    ) -> Result<bool>;
+
+    /// Check if any sessions should trigger rendering
+    async fn check_render_triggers(&self) -> Result<Vec<Uuid>>;
+
+    /// Get pending trigger events for a session
+    async fn get_pending_trigger_events(&self, session_id: Uuid) -> Result<Vec<TriggerEvent>>;
+
+    /// Clear trigger events for a session
+    async fn clear_trigger_events(&self, session_id: Uuid) -> Result<()>;
+
+    /// Force render trigger for a session
+    async fn force_render_trigger(&self, session_id: Uuid) -> Result<bool>;
+
+    /// Update render trigger configuration for a session
+    async fn update_trigger_config(&self, session_id: Uuid, config: TriggerConfig) -> Result<()>;
+
+    /// Process content with live rendering integration
+    async fn process_live_content(
+        &self,
+        session_id: Uuid,
+        trigger_events: Vec<TriggerEvent>,
+    ) -> Result<LiveEditorResult>;
+
+    /// Handle click-to-edit functionality
+    async fn handle_click_to_edit(
+        &self,
+        session_id: Uuid,
+        click_position: usize,
+    ) -> Result<ClickToEditResult>;
+
+    /// Handle mode switching with cursor position preservation
+    async fn handle_mode_switch(
+        &self,
+        session_id: Uuid,
+        from_mode: EditorMode,
+        to_mode: EditorMode,
+    ) -> Result<ModeSwitchResult>;
+
+    /// Update content of the currently active element
+    async fn update_active_element_content(
+        &self,
+        session_id: Uuid,
+        new_content: String,
+    ) -> Result<bool>;
 }
 
 /// Main editor plugin implementation
@@ -215,6 +274,85 @@ impl EditorPlugin for RuneEditorPlugin {
     async fn set_auto_save(&self, session_id: Uuid, enabled: bool) -> Result<()> {
         let mut manager = self.session_manager.write().await;
         manager.set_auto_save(session_id, enabled).await
+    }
+
+    async fn handle_space_key(
+        &self,
+        session_id: Uuid,
+        cursor_position: CursorPosition,
+    ) -> Result<bool> {
+        let mut manager = self.session_manager.write().await;
+        manager.handle_space_key(session_id, cursor_position).await
+    }
+
+    async fn check_render_triggers(&self) -> Result<Vec<Uuid>> {
+        let mut manager = self.session_manager.write().await;
+        manager.check_render_triggers().await
+    }
+
+    async fn get_pending_trigger_events(&self, session_id: Uuid) -> Result<Vec<TriggerEvent>> {
+        let manager = self.session_manager.read().await;
+        manager.get_pending_trigger_events(session_id).await
+    }
+
+    async fn clear_trigger_events(&self, session_id: Uuid) -> Result<()> {
+        let mut manager = self.session_manager.write().await;
+        manager.clear_trigger_events(session_id).await
+    }
+
+    async fn force_render_trigger(&self, session_id: Uuid) -> Result<bool> {
+        let mut manager = self.session_manager.write().await;
+        manager.force_render_trigger(session_id).await
+    }
+
+    async fn update_trigger_config(&self, session_id: Uuid, config: TriggerConfig) -> Result<()> {
+        let mut manager = self.session_manager.write().await;
+        manager.update_trigger_config(session_id, config).await
+    }
+
+    async fn process_live_content(
+        &self,
+        session_id: Uuid,
+        trigger_events: Vec<TriggerEvent>,
+    ) -> Result<LiveEditorResult> {
+        let mut manager = self.session_manager.write().await;
+        manager
+            .process_live_content(session_id, trigger_events)
+            .await
+    }
+
+    async fn handle_click_to_edit(
+        &self,
+        session_id: Uuid,
+        click_position: usize,
+    ) -> Result<ClickToEditResult> {
+        let mut manager = self.session_manager.write().await;
+        manager
+            .handle_click_to_edit(session_id, click_position)
+            .await
+    }
+
+    async fn handle_mode_switch(
+        &self,
+        session_id: Uuid,
+        from_mode: EditorMode,
+        to_mode: EditorMode,
+    ) -> Result<ModeSwitchResult> {
+        let mut manager = self.session_manager.write().await;
+        manager
+            .handle_mode_switch(session_id, from_mode, to_mode)
+            .await
+    }
+
+    async fn update_active_element_content(
+        &self,
+        session_id: Uuid,
+        new_content: String,
+    ) -> Result<bool> {
+        let mut manager = self.session_manager.write().await;
+        manager
+            .update_active_element_content(session_id, new_content)
+            .await
     }
 }
 
