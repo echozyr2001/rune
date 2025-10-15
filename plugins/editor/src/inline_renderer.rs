@@ -49,7 +49,8 @@ impl RenderedElement {
 
     /// Add a data attribute to the element
     pub fn add_data_attribute(&mut self, key: &str, value: &str) {
-        self.data_attributes.insert(key.to_string(), value.to_string());
+        self.data_attributes
+            .insert(key.to_string(), value.to_string());
     }
 
     /// Set editing state
@@ -129,7 +130,11 @@ pub trait InlineRenderer {
     fn extract_raw_content(&self, rendered: &RenderedElement) -> String;
 
     /// Check if cursor is within an element for editing activation
-    fn is_cursor_in_element(&self, element: &SyntaxElement, cursor_position: &CursorPosition) -> bool;
+    fn is_cursor_in_element(
+        &self,
+        element: &SyntaxElement,
+        cursor_position: &CursorPosition,
+    ) -> bool;
 
     /// Render document content with inline elements
     fn render_document(
@@ -166,7 +171,13 @@ impl MarkdownInlineRenderer {
     }
 
     /// Render header element
-    fn render_header(&self, level: u8, content: &str, raw_content: &str, range: (usize, usize)) -> RenderedElement {
+    fn render_header(
+        &self,
+        level: u8,
+        content: &str,
+        raw_content: &str,
+        range: (usize, usize),
+    ) -> RenderedElement {
         let tag = format!("h{}", level);
         let html = format!("<{}>{}</{}>", tag, html_escape(content), tag);
         let css_classes = vec![
@@ -180,7 +191,12 @@ impl MarkdownInlineRenderer {
     }
 
     /// Render bold element
-    fn render_bold(&self, content: &str, raw_content: &str, range: (usize, usize)) -> RenderedElement {
+    fn render_bold(
+        &self,
+        content: &str,
+        raw_content: &str,
+        range: (usize, usize),
+    ) -> RenderedElement {
         let html = format!("<strong>{}</strong>", html_escape(content));
         let css_classes = vec![self.css_class("bold")];
 
@@ -188,7 +204,12 @@ impl MarkdownInlineRenderer {
     }
 
     /// Render italic element
-    fn render_italic(&self, content: &str, raw_content: &str, range: (usize, usize)) -> RenderedElement {
+    fn render_italic(
+        &self,
+        content: &str,
+        raw_content: &str,
+        range: (usize, usize),
+    ) -> RenderedElement {
         let html = format!("<em>{}</em>", html_escape(content));
         let css_classes = vec![self.css_class("italic")];
 
@@ -196,7 +217,12 @@ impl MarkdownInlineRenderer {
     }
 
     /// Render inline code element
-    fn render_inline_code(&self, content: &str, raw_content: &str, range: (usize, usize)) -> RenderedElement {
+    fn render_inline_code(
+        &self,
+        content: &str,
+        raw_content: &str,
+        range: (usize, usize),
+    ) -> RenderedElement {
         let html = format!("<code>{}</code>", html_escape(content));
         let css_classes = vec![self.css_class("code"), self.css_class("inline-code")];
 
@@ -204,19 +230,25 @@ impl MarkdownInlineRenderer {
     }
 
     /// Render code block element
-    fn render_code_block(&self, content: &str, language: &Option<String>, raw_content: &str, range: (usize, usize)) -> RenderedElement {
+    fn render_code_block(
+        &self,
+        content: &str,
+        language: &Option<String>,
+        raw_content: &str,
+        range: (usize, usize),
+    ) -> RenderedElement {
         let lang_class = language
             .as_ref()
             .map(|l| format!(" language-{}", l))
             .unwrap_or_default();
-        
+
         let html = format!(
             "<pre><code class=\"{}{}\">{}</code></pre>",
             self.css_class("code-block"),
             lang_class,
             html_escape(content)
         );
-        
+
         let mut css_classes = vec![self.css_class("code-block")];
         if let Some(lang) = language {
             css_classes.push(format!("language-{}", lang));
@@ -230,19 +262,26 @@ impl MarkdownInlineRenderer {
     }
 
     /// Render link element
-    fn render_link(&self, text: &str, url: &str, title: &Option<String>, raw_content: &str, range: (usize, usize)) -> RenderedElement {
+    fn render_link(
+        &self,
+        text: &str,
+        url: &str,
+        title: &Option<String>,
+        raw_content: &str,
+        range: (usize, usize),
+    ) -> RenderedElement {
         let title_attr = title
             .as_ref()
             .map(|t| format!(" title=\"{}\"", html_escape(t)))
             .unwrap_or_default();
-        
+
         let html = format!(
             "<a href=\"{}\"{}>{}</a>",
             html_escape(url),
             title_attr,
             html_escape(text)
         );
-        
+
         let css_classes = vec![self.css_class("link")];
 
         let mut element = RenderedElement::new(html, css_classes, raw_content.to_string(), range);
@@ -254,13 +293,21 @@ impl MarkdownInlineRenderer {
     }
 
     /// Render list item element
-    fn render_list_item(&self, content: &str, level: u8, item_type: &str, number: Option<u32>, raw_content: &str, range: (usize, usize)) -> RenderedElement {
+    fn render_list_item(
+        &self,
+        content: &str,
+        level: u8,
+        item_type: &str,
+        number: Option<u32>,
+        raw_content: &str,
+        range: (usize, usize),
+    ) -> RenderedElement {
         let html = format!("<li>{}</li>", html_escape(content));
         let mut css_classes = vec![
             self.css_class("list-item"),
             self.css_class(&format!("list-item-{}", item_type)),
         ];
-        
+
         if level > 0 {
             css_classes.push(self.css_class(&format!("level-{}", level)));
         }
@@ -268,11 +315,11 @@ impl MarkdownInlineRenderer {
         let mut element = RenderedElement::new(html, css_classes, raw_content.to_string(), range);
         element.add_data_attribute("level", &level.to_string());
         element.add_data_attribute("type", item_type);
-        
+
         if let Some(num) = number {
             element.add_data_attribute("number", &num.to_string());
         }
-        
+
         element
     }
 }
@@ -280,11 +327,14 @@ impl MarkdownInlineRenderer {
 impl InlineRenderer for MarkdownInlineRenderer {
     fn render_element(&self, element: &SyntaxElement) -> RenderedElement {
         let range = (element.range.start, element.range.end);
-        
+
         match &element.element_type {
-            SyntaxElementType::Header { level } => {
-                self.render_header(*level, &element.rendered_content, &element.raw_content, range)
-            }
+            SyntaxElementType::Header { level } => self.render_header(
+                *level,
+                &element.rendered_content,
+                &element.raw_content,
+                range,
+            ),
             SyntaxElementType::Bold => {
                 self.render_bold(&element.rendered_content, &element.raw_content, range)
             }
@@ -294,18 +344,35 @@ impl InlineRenderer for MarkdownInlineRenderer {
             SyntaxElementType::InlineCode => {
                 self.render_inline_code(&element.rendered_content, &element.raw_content, range)
             }
-            SyntaxElementType::CodeBlock { language } => {
-                self.render_code_block(&element.rendered_content, language, &element.raw_content, range)
-            }
-            SyntaxElementType::Link { url, title } => {
-                self.render_link(&element.rendered_content, url, title, &element.raw_content, range)
-            }
-            SyntaxElementType::UnorderedListItem { level } => {
-                self.render_list_item(&element.rendered_content, *level, "unordered", None, &element.raw_content, range)
-            }
-            SyntaxElementType::OrderedListItem { level, number } => {
-                self.render_list_item(&element.rendered_content, *level, "ordered", Some(*number), &element.raw_content, range)
-            }
+            SyntaxElementType::CodeBlock { language } => self.render_code_block(
+                &element.rendered_content,
+                language,
+                &element.raw_content,
+                range,
+            ),
+            SyntaxElementType::Link { url, title } => self.render_link(
+                &element.rendered_content,
+                url,
+                title,
+                &element.raw_content,
+                range,
+            ),
+            SyntaxElementType::UnorderedListItem { level } => self.render_list_item(
+                &element.rendered_content,
+                *level,
+                "unordered",
+                None,
+                &element.raw_content,
+                range,
+            ),
+            SyntaxElementType::OrderedListItem { level, number } => self.render_list_item(
+                &element.rendered_content,
+                *level,
+                "ordered",
+                Some(*number),
+                &element.raw_content,
+                range,
+            ),
         }
     }
 
@@ -318,13 +385,13 @@ impl InlineRenderer for MarkdownInlineRenderer {
             .iter()
             .map(|element| {
                 let mut rendered = self.render_element(element);
-                
+
                 // Check if cursor is within this element
                 if self.is_cursor_in_element(element, cursor_position) {
                     rendered.set_editing(true);
                     rendered.add_class("cursor-active");
                 }
-                
+
                 rendered
             })
             .collect()
@@ -334,7 +401,11 @@ impl InlineRenderer for MarkdownInlineRenderer {
         rendered.raw_content.clone()
     }
 
-    fn is_cursor_in_element(&self, element: &SyntaxElement, cursor_position: &CursorPosition) -> bool {
+    fn is_cursor_in_element(
+        &self,
+        element: &SyntaxElement,
+        cursor_position: &CursorPosition,
+    ) -> bool {
         element.contains_cursor(cursor_position.absolute)
     }
 
@@ -350,7 +421,7 @@ impl InlineRenderer for MarkdownInlineRenderer {
 
         let mut result = String::new();
         let mut last_pos = 0;
-        
+
         // Sort elements by position to ensure proper ordering
         let mut sorted_elements = elements.to_vec();
         sorted_elements.sort_by_key(|e| e.range.start);
@@ -364,7 +435,7 @@ impl InlineRenderer for MarkdownInlineRenderer {
 
             // Render the element
             let mut rendered = self.render_element(element);
-            
+
             // Check if cursor is within this element for editing
             if self.is_cursor_in_element(element, cursor_position) {
                 rendered.set_editing(true);
@@ -474,7 +545,9 @@ mod tests {
         );
 
         let rendered = renderer.render_element(&element);
-        assert!(rendered.html.contains("<a href=\"https://example.com\">link</a>"));
+        assert!(rendered
+            .html
+            .contains("<a href=\"https://example.com\">link</a>"));
         assert!(rendered.css_classes.contains(&"md-link".to_string()));
     }
 
@@ -510,8 +583,12 @@ mod tests {
 
         assert_eq!(rendered_elements.len(), 1);
         assert!(rendered_elements[0].is_editing);
-        assert!(rendered_elements[0].css_classes.contains(&"editing".to_string()));
-        assert!(rendered_elements[0].css_classes.contains(&"cursor-active".to_string()));
+        assert!(rendered_elements[0]
+            .css_classes
+            .contains(&"editing".to_string()));
+        assert!(rendered_elements[0]
+            .css_classes
+            .contains(&"cursor-active".to_string()));
     }
 
     #[test]

@@ -182,7 +182,7 @@ impl MarkdownSyntaxParser {
 
         let mut level = 0;
         let mut chars = trimmed.chars();
-        
+
         // Count consecutive # characters
         while let Some(ch) = chars.next() {
             if ch == '#' && level < 6 {
@@ -199,7 +199,7 @@ impl MarkdownSyntaxParser {
         // Find the start of the header text
         let remaining: String = chars.collect();
         let header_text = remaining.trim_start();
-        
+
         if header_text.is_empty() {
             return None;
         }
@@ -263,7 +263,7 @@ impl MarkdownSyntaxParser {
                     // Found closing double marker
                     let raw_content = chars[0..i + 2].iter().collect::<String>();
                     let rendered_content = chars[marker_len..i].iter().collect::<String>();
-                    
+
                     return Some(SyntaxElement::new(
                         SyntaxElementType::Bold,
                         PositionRange::new(offset, offset + i + 2),
@@ -274,7 +274,7 @@ impl MarkdownSyntaxParser {
                     // Found closing single marker
                     let raw_content = chars[0..i + 1].iter().collect::<String>();
                     let rendered_content = chars[marker_len..i].iter().collect::<String>();
-                    
+
                     return Some(SyntaxElement::new(
                         SyntaxElementType::Italic,
                         PositionRange::new(offset, offset + i + 1),
@@ -301,7 +301,7 @@ impl MarkdownSyntaxParser {
             if chars[i] == '`' {
                 let raw_content = chars[0..i + 1].iter().collect::<String>();
                 let rendered_content = chars[1..i].iter().collect::<String>();
-                
+
                 return Some(SyntaxElement::new(
                     SyntaxElementType::InlineCode,
                     PositionRange::new(offset, offset + i + 1),
@@ -347,7 +347,7 @@ impl MarkdownSyntaxParser {
         }
 
         let text_end = text_end?;
-        
+
         // Check for opening parenthesis
         if text_end + 1 >= chars.len() || chars[text_end + 1] != '(' {
             return None;
@@ -483,7 +483,7 @@ impl SyntaxParser for MarkdownSyntaxParser {
             .as_ref()
             .map(|r| r.start.saturating_sub(100))
             .unwrap_or(cursor_position.saturating_sub(100));
-        
+
         let end_pos = change_range
             .as_ref()
             .map(|r| (r.end + 100).min(content.len()))
@@ -541,7 +541,7 @@ mod tests {
         let elements = parser.parse_document(content);
 
         assert_eq!(elements.len(), 3);
-        
+
         if let SyntaxElementType::Header { level } = &elements[0].element_type {
             assert_eq!(*level, 1);
             assert_eq!(elements[0].rendered_content, "Header 1");
@@ -556,10 +556,11 @@ mod tests {
         let content = "This is **bold** text";
         let elements = parser.parse_document(content);
 
-        let bold_elements: Vec<_> = elements.iter()
+        let bold_elements: Vec<_> = elements
+            .iter()
             .filter(|e| matches!(e.element_type, SyntaxElementType::Bold))
             .collect();
-        
+
         assert_eq!(bold_elements.len(), 1);
         assert_eq!(bold_elements[0].rendered_content, "bold");
         assert_eq!(bold_elements[0].raw_content, "**bold**");
@@ -571,10 +572,11 @@ mod tests {
         let content = "This is *italic* text";
         let elements = parser.parse_document(content);
 
-        let italic_elements: Vec<_> = elements.iter()
+        let italic_elements: Vec<_> = elements
+            .iter()
             .filter(|e| matches!(e.element_type, SyntaxElementType::Italic))
             .collect();
-        
+
         assert_eq!(italic_elements.len(), 1);
         assert_eq!(italic_elements[0].rendered_content, "italic");
         assert_eq!(italic_elements[0].raw_content, "*italic*");
@@ -586,10 +588,11 @@ mod tests {
         let content = "This is `code` text";
         let elements = parser.parse_document(content);
 
-        let code_elements: Vec<_> = elements.iter()
+        let code_elements: Vec<_> = elements
+            .iter()
             .filter(|e| matches!(e.element_type, SyntaxElementType::InlineCode))
             .collect();
-        
+
         assert_eq!(code_elements.len(), 1);
         assert_eq!(code_elements[0].rendered_content, "code");
         assert_eq!(code_elements[0].raw_content, "`code`");
@@ -601,13 +604,14 @@ mod tests {
         let content = "This is a [link](https://example.com) text";
         let elements = parser.parse_document(content);
 
-        let link_elements: Vec<_> = elements.iter()
+        let link_elements: Vec<_> = elements
+            .iter()
             .filter(|e| matches!(e.element_type, SyntaxElementType::Link { .. }))
             .collect();
-        
+
         assert_eq!(link_elements.len(), 1);
         assert_eq!(link_elements[0].rendered_content, "link");
-        
+
         if let SyntaxElementType::Link { url, .. } = &link_elements[0].element_type {
             assert_eq!(url, "https://example.com");
         }
@@ -619,29 +623,32 @@ mod tests {
         let content = "- Item 1\n- Item 2\n1. Numbered item";
         let elements = parser.parse_document(content);
 
-        let list_elements: Vec<_> = elements.iter()
-            .filter(|e| matches!(
-                e.element_type, 
-                SyntaxElementType::UnorderedListItem { .. } | 
-                SyntaxElementType::OrderedListItem { .. }
-            ))
+        let list_elements: Vec<_> = elements
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.element_type,
+                    SyntaxElementType::UnorderedListItem { .. }
+                        | SyntaxElementType::OrderedListItem { .. }
+                )
+            })
             .collect();
-        
+
         assert_eq!(list_elements.len(), 3);
     }
 
     #[test]
     fn test_position_range() {
         let range = PositionRange::new(5, 10);
-        
+
         assert!(range.contains(7));
         assert!(!range.contains(10));
         assert!(!range.contains(4));
         assert_eq!(range.len(), 5);
-        
+
         let other_range = PositionRange::new(8, 15);
         assert!(range.overlaps(&other_range));
-        
+
         let non_overlapping = PositionRange::new(15, 20);
         assert!(!range.overlaps(&non_overlapping));
     }
