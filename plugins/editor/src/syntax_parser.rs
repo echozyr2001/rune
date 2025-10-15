@@ -184,7 +184,7 @@ impl MarkdownSyntaxParser {
         let mut chars = trimmed.chars();
 
         // Count consecutive # characters
-        while let Some(ch) = chars.next() {
+        for ch in chars.by_ref() {
             if ch == '#' && level < 6 {
                 level += 1;
             } else {
@@ -220,7 +220,7 @@ impl MarkdownSyntaxParser {
         let mut elements = Vec::new();
         let mut chars = content.char_indices().peekable();
 
-        while let Some((i, ch)) = chars.next() {
+        for (i, ch) in chars {
             match ch {
                 '*' | '_' => {
                     if let Some(element) = self.parse_emphasis(&content[i..], offset + i) {
@@ -319,7 +319,7 @@ impl MarkdownSyntaxParser {
         let mut elements = Vec::new();
         let mut chars = content.char_indices().peekable();
 
-        while let Some((i, ch)) = chars.next() {
+        for (i, ch) in chars {
             if ch == '[' {
                 if let Some(element) = self.parse_link(&content[i..], offset + i) {
                     elements.push(element);

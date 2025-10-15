@@ -224,10 +224,8 @@ impl CursorManager {
             if mapping.raw_position >= change_range.end {
                 mapping.raw_position = (mapping.raw_position as i32 + change_delta) as usize;
                 true
-            } else if mapping.raw_position >= change_range.start {
-                false
             } else {
-                true
+                mapping.raw_position < change_range.start
             }
         });
 
@@ -276,7 +274,7 @@ impl CursorManager {
 
     pub fn is_cursor_in_active_element(&self) -> bool {
         self.get_element_at_cursor()
-            .map_or(false, |mapping| mapping.is_active)
+            .is_some_and(|mapping| mapping.is_active)
     }
 
     pub fn set_element_active(&mut self, element_id: &str, active: bool) {
