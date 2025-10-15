@@ -12,10 +12,12 @@ use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub mod editor_state;
+pub mod inline_renderer;
 pub mod session;
 pub mod syntax_parser;
 
 pub use editor_state::{CursorPosition, EditorMode, EditorState};
+pub use inline_renderer::{InlineRenderer, MarkdownInlineRenderer, RenderedElement};
 pub use session::{EditorSession, SessionManager};
 pub use syntax_parser::{
     MarkdownSyntaxParser, PositionRange, SyntaxElement, SyntaxElementType, SyntaxParser,
