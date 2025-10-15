@@ -11,11 +11,13 @@ use std::time::SystemTime;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+pub mod cursor_manager;
 pub mod editor_state;
 pub mod inline_renderer;
 pub mod session;
 pub mod syntax_parser;
 
+pub use cursor_manager::{CursorManager, ElementMapping, MappingStats, PositionMapping};
 pub use editor_state::{CursorPosition, EditorMode, EditorState};
 pub use inline_renderer::{InlineRenderer, MarkdownInlineRenderer, RenderedElement};
 pub use session::{EditorSession, SessionManager};
