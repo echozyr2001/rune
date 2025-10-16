@@ -4,7 +4,9 @@ use crate::editor_state::{CursorPosition, EditorMode, EditorState};
 use crate::file_sync::{
     ConflictResolution, ConflictResolutionStrategy, ExternalChange, FileSync, FileSyncManager,
 };
-use crate::keyboard_shortcuts::{KeyboardShortcutHandler, ShortcutAction, ShortcutResult, TextSelection};
+use crate::keyboard_shortcuts::{
+    KeyboardShortcutHandler, ShortcutAction, ShortcutResult, TextSelection,
+};
 use crate::live_editor::{
     ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
 };
@@ -1130,14 +1132,16 @@ impl SessionManager {
         let cursor_position = session.state.cursor_position.clone();
 
         // Apply the keyboard shortcut
-        let result = self
-            .keyboard_handler
-            .apply_shortcut(action.clone(), &content, selection, cursor_position);
+        let result = self.keyboard_handler.apply_shortcut(
+            action.clone(),
+            &content,
+            selection,
+            cursor_position,
+        );
 
         if result.success {
             // Update session content with the modified content
-            self.set_content(session_id, result.content.clone())
-                .await?;
+            self.set_content(session_id, result.content.clone()).await?;
 
             // Update cursor position
             self.update_cursor_position(session_id, result.cursor_position.clone())

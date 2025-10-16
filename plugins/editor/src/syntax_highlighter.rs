@@ -305,7 +305,10 @@ impl SyntaxHighlighter {
 
     /// Find closing character for inline elements
     fn find_closing_char(&self, chars: &[char], start: usize, closing: char) -> Option<usize> {
-        chars[start..].iter().position(|&c| c == closing).map(|pos| start + pos)
+        chars[start..]
+            .iter()
+            .position(|&c| c == closing)
+            .map(|pos| start + pos)
     }
 
     /// Find closing sequence for multi-character markers
@@ -327,7 +330,10 @@ impl SyntaxHighlighter {
     /// Parse markdown link syntax [text](url)
     fn parse_link(&self, chars: &[char], start: usize, offset: usize) -> Option<HighlightToken> {
         // Find closing ]
-        let bracket_end = chars[(start + 1)..].iter().position(|&c| c == ']').map(|pos| start + 1 + pos);
+        let bracket_end = chars[(start + 1)..]
+            .iter()
+            .position(|&c| c == ']')
+            .map(|pos| start + 1 + pos);
 
         if let Some(bracket_end) = bracket_end {
             // Check for (url) after ]
@@ -355,7 +361,6 @@ impl Default for SyntaxHighlighter {
         Self::new()
     }
 }
-
 
 #[cfg(test)]
 mod tests {
