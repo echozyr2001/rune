@@ -434,15 +434,61 @@ impl HttpHandler for RawEditorHandler {
 pub struct EditorWebSocketHandler {
     path: String,
     editor_sessions: Arc<RwLock<HashMap<String, EditorSession>>>,
+    /// Broadcast channel for editor events
+    event_sender: Arc<RwLock<Option<tokio::sync::broadcast::Sender<EditorBroadcastMessage>>>>,
+}
+
+/// Broadcast message for editor events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditorBroadcastMessage {
+    pub session_id: String,
+    pub event: EditorMessage,
+    pub timestamp: String,
 }
 
 impl EditorWebSocketHandler {
     /// Create a new editor WebSocket handler
     pub fn new(path: String) -> Self {
+        let (event_sender, _) = tokio::sync::broadcast::channel(100);
         Self {
             path,
             editor_sessions: Arc::new(RwLock::new(HashMap::new())),
+            event_sender: Arc::new(RwLock::new(Some(event_sender))),
         }
+    }
+
+    /// Get the event broadcast sender
+    pub async fn get_event_sender(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Sender<EditorBroadcastMessage>> {
+        let sender = self.event_sender.read().await;
+        sender.clone()
+    }
+
+    /// Broadcast an editor event to all connected clients
+    pub async fn broadcast_editor_event(
+        &self,
+        session_id: String,
+        event: EditorMessage,
+    ) -> Result<()> {
+        if let Some(sender) = self.get_event_sender().await {
+            let broadcast_msg = EditorBroadcastMessage {
+                session_id,
+                event,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    .to_string(),
+            };
+
+            sender.send(broadcast_msg).map_err(|e| {
+                RuneError::Server(format!("Failed to broadcast editor event: {}", e))
+            })?;
+
+            tracing::debug!("Broadcasted editor event to all clients");
+        }
+        Ok(())
     }
 
     /// Handle content update message
@@ -490,6 +536,34 @@ impl WebSocketHandler for EditorWebSocketHandler {
 
     async fn on_connect(&self, connection: &WebSocketConnection) -> Result<()> {
         tracing::info!("Editor WebSocket client connected: {}", connection.id);
+
+        // Subscribe this connection to the editor event broadcast
+        if let Some(event_sender) = self.get_event_sender().await {
+            let mut rx = event_sender.subscribe();
+            let conn_sender = connection.sender.clone();
+            let conn_id = connection.id.clone();
+
+            tokio::spawn(async move {
+                while let Ok(broadcast_msg) = rx.recv().await {
+                    // Convert broadcast message to JSON and send to client
+                    if let Ok(text) = serde_json::to_string(&broadcast_msg.event) {
+                        if conn_sender.send(WebSocketMessage::Text(text)).is_err() {
+                            tracing::debug!("Connection {} closed, stopping broadcast", conn_id);
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        // Send a welcome message
+        connection
+            .send_json(&serde_json::json!({
+                "type": "welcome",
+                "message": "Connected to editor WebSocket server"
+            }))
+            .await?;
+
         Ok(())
     }
 
@@ -500,34 +574,55 @@ impl WebSocketHandler for EditorWebSocketHandler {
     ) -> Result<()> {
         if let WebSocketMessage::Text(text) = message {
             match serde_json::from_str::<EditorMessage>(&text) {
-                Ok(editor_msg) => match editor_msg {
+                Ok(editor_msg) => match editor_msg.clone() {
                     EditorMessage::ContentUpdate {
-                        session_id,
-                        content,
-                        cursor_position,
+                        ref session_id,
+                        ref content,
+                        ref cursor_position,
                     } => {
-                        self.handle_content_update(&session_id, content, cursor_position)
+                        self.handle_content_update(session_id, content.clone(), cursor_position.clone())
                             .await?;
-                    }
-                    EditorMessage::SaveRequest { session_id } => {
-                        self.handle_save_request(&session_id).await?;
 
-                        let response = serde_json::json!({
-                            "type": "save_complete",
-                            "session_id": session_id,
-                            "success": true,
-                            "timestamp": std::time::SystemTime::now()
+                        // Broadcast content update to all other clients
+                        self.broadcast_editor_event(session_id.clone(), editor_msg)
+                            .await?;
+
+                        tracing::debug!(
+                            "Content updated and broadcasted for session {}",
+                            session_id
+                        );
+                    }
+                    EditorMessage::SaveRequest { ref session_id } => {
+                        self.handle_save_request(session_id).await?;
+
+                        let save_complete_msg = EditorMessage::SaveComplete {
+                            session_id: session_id.clone(),
+                            success: true,
+                            timestamp: std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_secs()
-                        });
-                        connection.send_text(response.to_string()).await?;
+                                .to_string(),
+                        };
+
+                        // Broadcast save complete to all clients
+                        self.broadcast_editor_event(session_id.clone(), save_complete_msg.clone())
+                            .await?;
+
+                        tracing::info!("Save completed and broadcasted for session {}", session_id);
                     }
-                    EditorMessage::ModeSwitch { session_id, mode } => {
+                    EditorMessage::ModeSwitch {
+                        ref session_id,
+                        ref mode,
+                    } => {
                         tracing::info!("Mode switch requested: {} -> {}", session_id, mode);
+
+                        // Broadcast mode switch to all clients
+                        self.broadcast_editor_event(session_id.clone(), editor_msg)
+                            .await?;
                     }
                     EditorMessage::ClickToEdit {
-                        session_id,
+                        ref session_id,
                         click_position,
                     } => {
                         tracing::debug!(
@@ -549,8 +644,8 @@ impl WebSocketHandler for EditorWebSocketHandler {
                         let _ = connection.send_text(response.to_string()).await;
                     }
                     EditorMessage::TriggerRender {
-                        session_id,
-                        trigger_events,
+                        ref session_id,
+                        ref trigger_events,
                     } => {
                         tracing::debug!(
                             "Render trigger for session {} with events: {:?}",
@@ -571,14 +666,18 @@ impl WebSocketHandler for EditorWebSocketHandler {
                         let _ = connection.send_text(response.to_string()).await;
                     }
                     EditorMessage::UpdateElement {
-                        session_id,
-                        element_content,
+                        ref session_id,
+                        ref element_content,
                     } => {
                         tracing::debug!("Update element content for session {}", session_id);
 
                         // In a real implementation, you would:
                         // 1. Call update_active_element_content on the editor plugin
                         // 2. Trigger re-rendering if successful
+
+                        // Broadcast element update to all clients
+                        self.broadcast_editor_event(session_id.clone(), editor_msg)
+                            .await?;
 
                         let response = serde_json::json!({
                             "type": "element_update_result",
@@ -587,14 +686,13 @@ impl WebSocketHandler for EditorWebSocketHandler {
                         });
                         let _ = connection.send_text(response.to_string()).await;
                     }
-                    EditorMessage::AutoSaveStatus { .. } => {
-                        // Auto-save status messages are sent from server to client, not the other way
-                        tracing::debug!(
-                            "Received auto-save status message from client (unexpected)"
-                        );
+                    EditorMessage::AutoSaveStatus { ref session_id, .. } => {
+                        // Broadcast auto-save status to all clients
+                        self.broadcast_editor_event(session_id.clone(), editor_msg)
+                            .await?;
                     }
                     EditorMessage::SaveComplete { .. } => {
-                        // Save complete messages are sent from server to client, not the other way
+                        // Save complete messages are typically sent from server to client
                         tracing::debug!("Received save complete message from client (unexpected)");
                     }
                 },

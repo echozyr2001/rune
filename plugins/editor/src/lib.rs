@@ -449,6 +449,52 @@ pub enum EditorEvent {
     },
 }
 
+impl EditorEvent {
+    /// Get the event type as a string
+    pub fn event_type(&self) -> &str {
+        match self {
+            EditorEvent::ContentChanged { .. } => "content_changed",
+            EditorEvent::ModeChanged { .. } => "mode_changed",
+            EditorEvent::SaveRequested { .. } => "save_requested",
+            EditorEvent::SaveCompleted { .. } => "save_completed",
+            EditorEvent::CursorMoved { .. } => "cursor_moved",
+            EditorEvent::AutoSaveTriggered { .. } => "auto_save_triggered",
+            EditorEvent::SessionCreated { .. } => "session_created",
+            EditorEvent::SessionClosed { .. } => "session_closed",
+            EditorEvent::AutoSaveStatusChanged { .. } => "auto_save_status_changed",
+        }
+    }
+
+    /// Get the session ID for this event
+    pub fn session_id(&self) -> Uuid {
+        match self {
+            EditorEvent::ContentChanged { session_id, .. }
+            | EditorEvent::ModeChanged { session_id, .. }
+            | EditorEvent::SaveRequested { session_id, .. }
+            | EditorEvent::SaveCompleted { session_id, .. }
+            | EditorEvent::CursorMoved { session_id, .. }
+            | EditorEvent::AutoSaveTriggered { session_id, .. }
+            | EditorEvent::SessionCreated { session_id, .. }
+            | EditorEvent::SessionClosed { session_id, .. }
+            | EditorEvent::AutoSaveStatusChanged { session_id, .. } => *session_id,
+        }
+    }
+
+    /// Serialize the event to JSON for WebSocket transmission
+    pub fn to_json(&self) -> Result<String> {
+        serde_json::to_string(self).map_err(|e| {
+            RuneError::Plugin(format!("Failed to serialize editor event: {}", e))
+        })
+    }
+
+    /// Deserialize an event from JSON
+    pub fn from_json(json: &str) -> Result<Self> {
+        serde_json::from_str(json).map_err(|e| {
+            RuneError::Plugin(format!("Failed to deserialize editor event: {}", e))
+        })
+    }
+}
+
 /// Editor-specific errors
 #[derive(Debug, thiserror::Error)]
 pub enum EditorError {
