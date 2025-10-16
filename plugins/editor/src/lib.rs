@@ -19,6 +19,7 @@ pub mod keyboard_shortcuts;
 pub mod live_editor;
 pub mod render_trigger;
 pub mod session;
+pub mod syntax_highlighter;
 pub mod syntax_parser;
 
 pub use cursor_manager::{CursorManager, ElementMapping, MappingStats, PositionMapping};
@@ -38,6 +39,7 @@ pub use render_trigger::{
     RenderTriggerDetector, RenderTriggerHandler, TriggerConfig, TriggerEvent,
 };
 pub use session::{AutoSaveStatus, EditorSession, SessionManager};
+pub use syntax_highlighter::{HighlightToken, SyntaxHighlighter, TokenType};
 pub use syntax_parser::{
     MarkdownSyntaxParser, PositionRange, SyntaxElement, SyntaxElementType, SyntaxParser,
 };

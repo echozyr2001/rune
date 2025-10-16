@@ -14,6 +14,8 @@ pub enum ShortcutAction {
     IndentList,
     /// Unindent list item (Shift+Tab)
     UnindentList,
+    /// Continue list on Enter key
+    ContinueList,
 }
 
 /// Result of applying a keyboard shortcut
@@ -36,6 +38,21 @@ pub struct TextSelection {
     pub start: usize,
     /// End position of the selection (absolute position)
     pub end: usize,
+}
+
+/// Information about a parsed list item
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ListItemInfo {
+    /// Indentation string (spaces or tabs)
+    indentation: String,
+    /// List marker (e.g., "- ", "* ", "1. ")
+    marker: String,
+    /// Whether this is an ordered list
+    is_ordered: bool,
+    /// Number for ordered lists
+    number: usize,
+    /// Content after the marker
+    content: String,
 }
 
 impl TextSelection {
@@ -92,6 +109,7 @@ impl KeyboardShortcutHandler {
             ShortcutAction::Italic => self.apply_italic(content, selection, cursor_position),
             ShortcutAction::IndentList => self.apply_indent_list(content, cursor_position),
             ShortcutAction::UnindentList => self.apply_unindent_list(content, cursor_position),
+            ShortcutAction::ContinueList => self.apply_continue_list(content, cursor_position),
         }
     }
 
@@ -273,18 +291,162 @@ impl KeyboardShortcutHandler {
         }
     }
 
+    /// Apply automatic list continuation on Enter key
+    fn apply_continue_list(
+        &self,
+        content: &str,
+        cursor_position: CursorPosition,
+    ) -> ShortcutResult {
+        let lines: Vec<&str> = content.lines().collect();
+
+        if cursor_position.line >= lines.len() {
+            return ShortcutResult {
+                content: content.to_string(),
+                cursor_position,
+                success: false,
+                message: Some("Invalid cursor position".to_string()),
+            };
+        }
+
+        let current_line = lines[cursor_position.line];
+
+        // Check if current line is a list item
+        if let Some(list_info) = self.parse_list_item(current_line) {
+            // Check if the list item is empty (only has the marker)
+            if list_info.content.trim().is_empty() {
+                // Empty list item - remove it and exit list mode
+                let mut new_lines: Vec<String> = lines.iter().map(|s| s.to_string()).collect();
+                new_lines[cursor_position.line] = String::new();
+
+                let new_content = new_lines.join("\n");
+                let new_absolute = cursor_position.absolute - list_info.marker.len();
+
+                let new_cursor = self.calculate_cursor_position(&new_content, new_absolute);
+
+                return ShortcutResult {
+                    content: new_content,
+                    cursor_position: new_cursor,
+                    success: true,
+                    message: Some("Exited list mode".to_string()),
+                };
+            }
+
+            // Split the current line at cursor position
+            let line_start = &current_line[..cursor_position.column];
+            let line_end = &current_line[cursor_position.column..];
+
+            // Create new list item with same indentation and marker type
+            let new_marker = if list_info.is_ordered {
+                // Increment the number for ordered lists
+                format!("{}. ", list_info.number + 1)
+            } else {
+                list_info.marker.clone()
+            };
+
+            let new_list_item = format!("{}{}", list_info.indentation, new_marker);
+
+            // Build new content
+            let mut new_lines: Vec<String> = Vec::new();
+            for (i, line) in lines.iter().enumerate() {
+                if i == cursor_position.line {
+                    new_lines.push(line_start.to_string());
+                    new_lines.push(format!("{}{}", new_list_item, line_end));
+                } else {
+                    new_lines.push(line.to_string());
+                }
+            }
+
+            let new_content = new_lines.join("\n");
+
+            // Calculate new cursor position (at the end of the new list marker)
+            let new_line = cursor_position.line + 1;
+            let new_column = new_list_item.len();
+            let new_absolute = if let Some(abs) =
+                CursorPosition::calculate_absolute(&new_content, new_line, new_column)
+            {
+                abs
+            } else {
+                cursor_position.absolute + line_start.len() + 1 + new_list_item.len()
+            };
+
+            let new_cursor = CursorPosition::new(new_line, new_column, new_absolute);
+
+            ShortcutResult {
+                content: new_content,
+                cursor_position: new_cursor,
+                success: true,
+                message: Some("Continued list".to_string()),
+            }
+        } else {
+            // Not a list line - just insert a newline
+            let (before, after) = content.split_at(cursor_position.absolute);
+            let new_content = format!("{}\n{}", before, after);
+            let new_absolute = cursor_position.absolute + 1;
+
+            let new_cursor = self.calculate_cursor_position(&new_content, new_absolute);
+
+            ShortcutResult {
+                content: new_content,
+                cursor_position: new_cursor,
+                success: true,
+                message: Some("Inserted newline".to_string()),
+            }
+        }
+    }
+
+    /// Parse list item information from a line
+    fn parse_list_item(&self, line: &str) -> Option<ListItemInfo> {
+        let indentation = line.len() - line.trim_start().len();
+        let indent_str = &line[..indentation];
+        let trimmed = line.trim_start();
+
+        // Check for unordered list markers
+        if let Some(content) = trimmed.strip_prefix("- ") {
+            return Some(ListItemInfo {
+                indentation: indent_str.to_string(),
+                marker: "- ".to_string(),
+                is_ordered: false,
+                number: 0,
+                content: content.to_string(),
+            });
+        } else if let Some(content) = trimmed.strip_prefix("* ") {
+            return Some(ListItemInfo {
+                indentation: indent_str.to_string(),
+                marker: "* ".to_string(),
+                is_ordered: false,
+                number: 0,
+                content: content.to_string(),
+            });
+        } else if let Some(content) = trimmed.strip_prefix("+ ") {
+            return Some(ListItemInfo {
+                indentation: indent_str.to_string(),
+                marker: "+ ".to_string(),
+                is_ordered: false,
+                number: 0,
+                content: content.to_string(),
+            });
+        }
+
+        // Check for ordered list markers (e.g., "1. ", "2. ", etc.)
+        if let Some(dot_pos) = trimmed.find(". ") {
+            let number_str = &trimmed[..dot_pos];
+            if let Ok(number) = number_str.parse::<usize>() {
+                return Some(ListItemInfo {
+                    indentation: indent_str.to_string(),
+                    marker: format!("{}. ", number),
+                    is_ordered: true,
+                    number,
+                    content: trimmed[dot_pos + 2..].to_string(),
+                });
+            }
+        }
+
+        None
+    }
+
     /// Check if a line is a list item
     fn is_list_line(&self, line: &str) -> bool {
-        let trimmed = line.trim_start();
-        trimmed.starts_with("- ")
-            || trimmed.starts_with("* ")
-            || trimmed.starts_with("+ ")
-            || trimmed
-                .chars()
-                .next()
-                .map(|c| c.is_ascii_digit())
-                .unwrap_or(false)
-                && trimmed.contains(". ")
+        self.parse_list_item(line).is_some()
     }
 
     /// Calculate cursor position from absolute position
@@ -472,5 +634,120 @@ mod tests {
 
         assert!(result.success);
         assert_eq!(result.content, "*test*");
+    }
+
+    #[test]
+    fn test_continue_unordered_list() {
+        let handler = KeyboardShortcutHandler::new();
+        let content = "- Item 1";
+        let cursor = CursorPosition::new(0, 8, 8); // At end of line
+
+        let result = handler.apply_continue_list(content, cursor);
+
+        assert!(result.success);
+        assert!(result.content.contains("- Item 1\n- "));
+        assert_eq!(result.cursor_position.line, 1);
+    }
+
+    #[test]
+    fn test_continue_ordered_list() {
+        let handler = KeyboardShortcutHandler::new();
+        let content = "1. First item";
+        let cursor = CursorPosition::new(0, 13, 13); // At end of line
+
+        let result = handler.apply_continue_list(content, cursor);
+
+        assert!(result.success);
+        assert!(result.content.contains("1. First item\n2. "));
+        assert_eq!(result.cursor_position.line, 1);
+    }
+
+    #[test]
+    fn test_continue_indented_list() {
+        let handler = KeyboardShortcutHandler::new();
+        let content = "  - Indented item";
+        let cursor = CursorPosition::new(0, 17, 17); // At end of line
+
+        let result = handler.apply_continue_list(content, cursor);
+
+        assert!(result.success);
+        assert!(result.content.contains("  - Indented item\n  - "));
+        assert_eq!(result.cursor_position.line, 1);
+    }
+
+    #[test]
+    fn test_exit_list_on_empty_item() {
+        let handler = KeyboardShortcutHandler::new();
+        let content = "- Item 1\n- ";
+        let cursor = CursorPosition::new(1, 2, 11); // At end of empty list item
+
+        let result = handler.apply_continue_list(content, cursor);
+
+        assert!(result.success);
+        assert!(result.content.contains("- Item 1\n"));
+        assert!(!result.content.contains("- \n- "));
+    }
+
+    #[test]
+    fn test_split_list_item_at_cursor() {
+        let handler = KeyboardShortcutHandler::new();
+        let content = "- Item with more text";
+        let cursor = CursorPosition::new(0, 11, 11); // After "Item with"
+
+        let result = handler.apply_continue_list(content, cursor);
+
+        assert!(result.success);
+        // When splitting, the first line keeps everything up to cursor
+        // and the second line gets a new list marker plus the rest
+        assert!(result.content.contains("- Item with"));
+        assert!(result.content.contains("\n-  more text"));
+    }
+
+    #[test]
+    fn test_parse_list_item_unordered() {
+        let handler = KeyboardShortcutHandler::new();
+
+        let info = handler.parse_list_item("- Item").unwrap();
+        assert_eq!(info.marker, "- ");
+        assert!(!info.is_ordered);
+        assert_eq!(info.content, "Item");
+
+        let info = handler.parse_list_item("* Item").unwrap();
+        assert_eq!(info.marker, "* ");
+
+        let info = handler.parse_list_item("+ Item").unwrap();
+        assert_eq!(info.marker, "+ ");
+    }
+
+    #[test]
+    fn test_parse_list_item_ordered() {
+        let handler = KeyboardShortcutHandler::new();
+
+        let info = handler.parse_list_item("1. First").unwrap();
+        assert_eq!(info.marker, "1. ");
+        assert!(info.is_ordered);
+        assert_eq!(info.number, 1);
+        assert_eq!(info.content, "First");
+
+        let info = handler.parse_list_item("42. Answer").unwrap();
+        assert_eq!(info.number, 42);
+    }
+
+    #[test]
+    fn test_parse_list_item_with_indentation() {
+        let handler = KeyboardShortcutHandler::new();
+
+        let info = handler.parse_list_item("  - Indented").unwrap();
+        assert_eq!(info.indentation, "  ");
+        assert_eq!(info.marker, "- ");
+        assert_eq!(info.content, "Indented");
+    }
+
+    #[test]
+    fn test_parse_non_list_line() {
+        let handler = KeyboardShortcutHandler::new();
+
+        assert!(handler.parse_list_item("Regular text").is_none());
+        assert!(handler.parse_list_item("Not a list").is_none());
     }
 }
