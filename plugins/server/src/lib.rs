@@ -483,6 +483,7 @@ pub struct ServerPlugin {
     handler_registry: Option<Arc<HandlerRegistry>>,
     server_handle: Option<tokio::task::JoinHandle<()>>,
     reload_sender: Option<tokio::sync::broadcast::Sender<handlers::ServerMessage>>,
+    editor_ws_handler: Arc<RwLock<Option<Arc<editor_handlers::EditorWebSocketHandler>>>>,
 }
 
 impl ServerPlugin {
@@ -493,6 +494,7 @@ impl ServerPlugin {
             version: "1.0.0".to_string(),
             status: PluginStatus::Loading,
             config: ServerConfig::default(),
+            editor_ws_handler: Arc::new(RwLock::new(None)),
             handler_registry: None,
             server_handle: None,
             reload_sender: None,
@@ -509,6 +511,7 @@ impl ServerPlugin {
             handler_registry: None,
             server_handle: None,
             reload_sender: None,
+            editor_ws_handler: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -595,6 +598,15 @@ impl ServerPlugin {
                 registry.register_http_handler(image_handler).await?;
             }
 
+            // Update editor WebSocket handler with current file
+            {
+                let handler = self.editor_ws_handler.read().await;
+                if let Some(editor_handler) = handler.as_ref() {
+                    editor_handler.set_markdown_file(current_file.to_path_buf()).await;
+                    info!("Updated editor WebSocket handler with file: {}", current_file.display());
+                }
+            }
+
             info!(
                 "File handlers registered successfully for: {}",
                 current_file.display()
@@ -624,8 +636,14 @@ impl ServerPlugin {
                 "/ws/editor".to_string(),
             ));
             registry
-                .register_websocket_handler(editor_ws_handler)
+                .register_websocket_handler(editor_ws_handler.clone())
                 .await?;
+            
+            // Store the editor handler so we can update it later
+            {
+                let mut handler = self.editor_ws_handler.write().await;
+                *handler = Some(editor_ws_handler);
+            }
 
             // Create and register a file change event handler that will trigger reloads
             let reload_event_handler = Arc::new(LiveReloadEventHandler {
@@ -931,12 +949,24 @@ impl Plugin for ServerPlugin {
 
         self.handler_registry = Some(registry.clone());
 
+        // Register core handlers
+        self.register_core_handlers(context).await?;
+
+        // Register theme asset handlers
+        self.register_theme_handlers(context.event_bus.clone())
+            .await?;
+
+        // Register WebSocket handlers (must be done before creating event handler)
+        self.register_websocket_handlers(context.event_bus.clone())
+            .await?;
+
         // Subscribe to system events to handle file changes
         // Note: We no longer start our own file monitoring - we rely on the FileWatcher plugin
         let server_event_handler = Arc::new(ServerEventHandler {
             plugin_context: context.clone(),
             handler_registry: registry.clone(),
             current_served_file: Arc::new(RwLock::new(None)),
+            editor_ws_handler: self.editor_ws_handler.clone(),
         });
 
         context
@@ -945,17 +975,6 @@ impl Plugin for ServerPlugin {
             .await?;
 
         info!("Server plugin will rely on FileWatcher plugin for file change detection");
-
-        // Register core handlers
-        self.register_core_handlers(context).await?;
-
-        // Register theme asset handlers
-        self.register_theme_handlers(context.event_bus.clone())
-            .await?;
-
-        // Register WebSocket handlers
-        self.register_websocket_handlers(context.event_bus.clone())
-            .await?;
 
         // Build and start the server
         let router = self.build_router(registry).await;
@@ -1040,6 +1059,7 @@ struct ServerEventHandler {
     plugin_context: PluginContext,
     handler_registry: Arc<HandlerRegistry>,
     current_served_file: Arc<RwLock<Option<PathBuf>>>,
+    editor_ws_handler: Arc<RwLock<Option<Arc<editor_handlers::EditorWebSocketHandler>>>>,
 }
 
 #[async_trait]
@@ -1310,6 +1330,15 @@ impl ServerEventHandler {
             self.handler_registry
                 .register_http_handler(image_handler)
                 .await?;
+        }
+
+        // Update editor WebSocket handler with the new file path
+        {
+            let handler = self.editor_ws_handler.read().await;
+            if let Some(editor_handler) = handler.as_ref() {
+                editor_handler.set_markdown_file(file_path.to_path_buf()).await;
+                info!("Updated editor WebSocket handler with file: {}", file_path.display());
+            }
         }
 
         info!(

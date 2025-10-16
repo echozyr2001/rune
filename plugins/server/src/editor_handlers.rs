@@ -63,6 +63,16 @@ pub enum EditorMessage {
         session_id: String,
         trigger_events: Vec<String>,
     },
+    #[serde(rename = "render_markdown")]
+    RenderMarkdown {
+        session_id: String,
+        content: String,
+    },
+    #[serde(rename = "markdown_rendered")]
+    MarkdownRendered {
+        session_id: String,
+        html: String,
+    },
     #[serde(rename = "update_element")]
     UpdateElement {
         session_id: String,
@@ -436,6 +446,8 @@ pub struct EditorWebSocketHandler {
     editor_sessions: Arc<RwLock<HashMap<String, EditorSession>>>,
     /// Broadcast channel for editor events
     event_sender: Arc<RwLock<Option<tokio::sync::broadcast::Sender<EditorBroadcastMessage>>>>,
+    /// Current markdown file being edited
+    markdown_file: Arc<RwLock<Option<PathBuf>>>,
 }
 
 /// Broadcast message for editor events
@@ -454,7 +466,14 @@ impl EditorWebSocketHandler {
             path,
             editor_sessions: Arc::new(RwLock::new(HashMap::new())),
             event_sender: Arc::new(RwLock::new(Some(event_sender))),
+            markdown_file: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set the current markdown file being edited
+    pub async fn set_markdown_file(&self, file_path: PathBuf) {
+        let mut markdown_file = self.markdown_file.write().await;
+        *markdown_file = Some(file_path);
     }
 
     /// Get the event broadcast sender
@@ -496,13 +515,33 @@ impl EditorWebSocketHandler {
         &self,
         session_id: &str,
         content: String,
-        _cursor_position: CursorPosition,
+        cursor_position: CursorPosition,
     ) -> Result<()> {
         let mut sessions = self.editor_sessions.write().await;
 
+        // Get the current markdown file path
+        let markdown_file = self.markdown_file.read().await;
+        let file_path = markdown_file.as_ref().ok_or_else(|| {
+            RuneError::Server("No markdown file set for editor".to_string())
+        })?;
+
+        // Create or update session
         if let Some(session) = sessions.get_mut(session_id) {
+            // Update existing session
             session.content = content;
             session.is_dirty = true;
+            session.cursor_position = cursor_position;
+        } else {
+            // Create new session
+            tracing::info!("Creating new editor session: {}", session_id);
+            let session = EditorSession {
+                session_id: session_id.to_string(),
+                file_path: file_path.clone(),
+                content,
+                cursor_position,
+                is_dirty: true,
+            };
+            sessions.insert(session_id.to_string(), session);
         }
 
         Ok(())
@@ -510,18 +549,39 @@ impl EditorWebSocketHandler {
 
     /// Handle save request
     async fn handle_save_request(&self, session_id: &str) -> Result<()> {
+        // Get the current markdown file path
+        let markdown_file = self.markdown_file.read().await;
+        let file_path = markdown_file.as_ref().ok_or_else(|| {
+            RuneError::Server("No markdown file set for editor".to_string())
+        })?;
+
+        // Get the content from the session
         let sessions = self.editor_sessions.read().await;
+        let content = if let Some(session) = sessions.get(session_id) {
+            session.content.clone()
+        } else {
+            // If session doesn't exist, try to get content from the most recent session
+            // or return an error
+            return Err(RuneError::Server(format!(
+                "Session not found: {}. Available sessions: {:?}",
+                session_id,
+                sessions.keys().collect::<Vec<_>>()
+            )));
+        };
 
-        if let Some(session) = sessions.get(session_id) {
-            tokio::fs::write(&session.file_path, &session.content)
-                .await
-                .map_err(|e| RuneError::Server(format!("Failed to save file: {}", e)))?;
+        drop(sessions);
 
-            drop(sessions);
-            let mut sessions = self.editor_sessions.write().await;
-            if let Some(session) = sessions.get_mut(session_id) {
-                session.is_dirty = false;
-            }
+        // Write content to file
+        tokio::fs::write(file_path, &content)
+            .await
+            .map_err(|e| RuneError::Server(format!("Failed to save file: {}", e)))?;
+
+        tracing::info!("✅ Saved content to file: {:?}", file_path);
+
+        // Mark session as not dirty
+        let mut sessions = self.editor_sessions.write().await;
+        if let Some(session) = sessions.get_mut(session_id) {
+            session.is_dirty = false;
         }
 
         Ok(())
@@ -664,6 +724,87 @@ impl WebSocketHandler for EditorWebSocketHandler {
                             "rendered_content": "<p>Live rendered content would go here</p>"
                         });
                         let _ = connection.send_text(response.to_string()).await;
+                    }
+                    EditorMessage::RenderMarkdown {
+                        ref session_id,
+                        ref content,
+                    } => {
+                        tracing::debug!(
+                            "Render markdown request for session {}, content length: {}",
+                            session_id,
+                            content.len()
+                        );
+
+                        // Render markdown to HTML using markdown crate
+                        let html_output = markdown::to_html_with_options(
+                            content,
+                            &markdown::Options {
+                                compile: markdown::CompileOptions {
+                                    allow_dangerous_html: true,
+                                    allow_dangerous_protocol: false,
+                                    ..markdown::CompileOptions::default()
+                                },
+                                parse: markdown::ParseOptions {
+                                    constructs: markdown::Constructs {
+                                        attention: true,
+                                        autolink: true,
+                                        block_quote: true,
+                                        character_escape: true,
+                                        character_reference: true,
+                                        code_fenced: true,
+                                        code_indented: true,
+                                        code_text: true,
+                                        definition: true,
+                                        frontmatter: false,
+                                        gfm_autolink_literal: true,
+                                        gfm_footnote_definition: true,
+                                        gfm_label_start_footnote: true,
+                                        gfm_strikethrough: true,
+                                        gfm_table: true,
+                                        gfm_task_list_item: true,
+                                        hard_break_escape: true,
+                                        hard_break_trailing: true,
+                                        heading_atx: true,
+                                        heading_setext: true,
+                                        html_flow: true,
+                                        html_text: true,
+                                        label_start_image: true,
+                                        label_start_link: true,
+                                        label_end: true,
+                                        list_item: true,
+                                        math_flow: false,
+                                        math_text: false,
+                                        mdx_esm: false,
+                                        mdx_expression_flow: false,
+                                        mdx_expression_text: false,
+                                        mdx_jsx_flow: false,
+                                        mdx_jsx_text: false,
+                                        thematic_break: true,
+                                    },
+                                    ..markdown::ParseOptions::default()
+                                },
+                            },
+                        )
+                        .unwrap_or_else(|e| {
+                            tracing::error!("Failed to render markdown: {}", e);
+                            format!("<p>Error rendering markdown: {}</p>", html_escape::encode_text(&e.to_string()))
+                        });
+
+                        // Send rendered HTML back to client
+                        let response_msg = EditorMessage::MarkdownRendered {
+                            session_id: session_id.clone(),
+                            html: html_output,
+                        };
+
+                        // Broadcast to all clients
+                        self.broadcast_editor_event(session_id.clone(), response_msg)
+                            .await?;
+
+                        tracing::debug!("Markdown rendered and sent for session {}", session_id);
+                    }
+                    EditorMessage::MarkdownRendered { .. } => {
+                        // This message is sent from server to client, not expected from client
+                        tracing::debug!("Received markdown_rendered message from client (unexpected)");
                     }
                     EditorMessage::UpdateElement {
                         ref session_id,
