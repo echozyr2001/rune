@@ -28,7 +28,7 @@ pub use live_editor::{
 pub use render_trigger::{
     RenderTriggerDetector, RenderTriggerHandler, TriggerConfig, TriggerEvent,
 };
-pub use session::{EditorSession, SessionManager};
+pub use session::{AutoSaveStatus, EditorSession, SessionManager};
 pub use syntax_parser::{
     MarkdownSyntaxParser, PositionRange, SyntaxElement, SyntaxElementType, SyntaxParser,
 };
@@ -123,6 +123,12 @@ pub trait EditorPlugin: Plugin {
         session_id: Uuid,
         new_content: String,
     ) -> Result<bool>;
+
+    /// Get auto-save status for a session
+    async fn get_auto_save_status(&self, session_id: Uuid) -> Result<AutoSaveStatus>;
+
+    /// Trigger auto-save for a session (with debouncing)
+    async fn trigger_auto_save(&self, session_id: Uuid) -> Result<()>;
 }
 
 /// Main editor plugin implementation
@@ -354,6 +360,16 @@ impl EditorPlugin for RuneEditorPlugin {
             .update_active_element_content(session_id, new_content)
             .await
     }
+
+    async fn get_auto_save_status(&self, session_id: Uuid) -> Result<AutoSaveStatus> {
+        let manager = self.session_manager.read().await;
+        manager.get_auto_save_status(session_id).await
+    }
+
+    async fn trigger_auto_save(&self, session_id: Uuid) -> Result<()> {
+        let mut manager = self.session_manager.write().await;
+        manager.trigger_auto_save(session_id).await
+    }
 }
 
 impl Default for RuneEditorPlugin {
@@ -395,6 +411,11 @@ pub enum EditorEvent {
     },
     /// Session closed
     SessionClosed { session_id: Uuid },
+    /// Auto-save status changed
+    AutoSaveStatusChanged {
+        session_id: Uuid,
+        status: AutoSaveStatus,
+    },
 }
 
 /// Editor-specific errors

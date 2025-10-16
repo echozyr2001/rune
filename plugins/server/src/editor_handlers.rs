@@ -68,6 +68,20 @@ pub enum EditorMessage {
         session_id: String,
         element_content: String,
     },
+    #[serde(rename = "auto_save_status")]
+    AutoSaveStatus {
+        session_id: String,
+        enabled: bool,
+        is_dirty: bool,
+        pending_save: bool,
+        last_save_time: Option<String>,
+    },
+    #[serde(rename = "save_complete")]
+    SaveComplete {
+        session_id: String,
+        success: bool,
+        timestamp: String,
+    },
 }
 
 impl RawEditorHandler {
@@ -161,6 +175,19 @@ impl RawEditorHandler {
         }}
         .status-info {{ display: flex; gap: 16px; }}
         .dirty-indicator {{ color: var(--link-color, #89b4fa); font-weight: bold; }}
+        .auto-save-indicator {{ 
+            color: var(--text-color, #cdd6f4); 
+            font-size: 11px; 
+            opacity: 0.7;
+        }}
+        .auto-save-indicator.saving {{ 
+            color: var(--link-color, #89b4fa); 
+            opacity: 1;
+        }}
+        .auto-save-indicator.saved {{ 
+            color: #a6e3a1; 
+            opacity: 1;
+        }}
     </style>
 </head>
 <body>
@@ -179,6 +206,7 @@ impl RawEditorHandler {
             <span id="cursor-position">Line 1, Column 1</span>
             <span id="word-count">0 words</span>
             <span id="dirty-status" class="dirty-indicator" style="display: none;">●</span>
+            <span id="auto-save-status" class="auto-save-indicator">Auto-save enabled</span>
         </div>
         <div>Raw Mode</div>
     </div>
@@ -187,6 +215,9 @@ impl RawEditorHandler {
         const editor = document.getElementById('editor');
         let isDirty = false;
         let ws = null;
+        let autoSaveEnabled = true;
+        let autoSaveTimer = null;
+        let lastSaveTime = null;
         
         function initWebSocket() {{
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -194,6 +225,30 @@ impl RawEditorHandler {
             ws = new WebSocket(wsUrl);
             ws.onopen = () => console.log('Editor WebSocket connected');
             ws.onclose = () => setTimeout(initWebSocket, 1000);
+            ws.onmessage = handleWebSocketMessage;
+        }}
+        
+        function handleWebSocketMessage(event) {{
+            try {{
+                const message = JSON.parse(event.data);
+                switch (message.type) {{
+                    case 'save_complete':
+                        if (message.session_id === sessionId) {{
+                            setDirty(false);
+                            updateAutoSaveStatus('saved');
+                            lastSaveTime = new Date(message.timestamp);
+                        }}
+                        break;
+                    case 'auto_save_status':
+                        if (message.session_id === sessionId) {{
+                            autoSaveEnabled = message.enabled;
+                            updateAutoSaveStatus(message.pending_save ? 'saving' : 'idle');
+                        }}
+                        break;
+                }}
+            }} catch (e) {{
+                console.error('Failed to parse WebSocket message:', e);
+            }}
         }}
         
         function sendMessage(message) {{
@@ -218,12 +273,68 @@ impl RawEditorHandler {
         function setDirty(dirty) {{
             isDirty = dirty;
             document.getElementById('dirty-status').style.display = dirty ? 'inline' : 'none';
+            
+            if (dirty && autoSaveEnabled) {{
+                startAutoSaveTimer();
+            }} else if (!dirty) {{
+                clearAutoSaveTimer();
+            }}
         }}
         
-        function saveContent() {{
+        function startAutoSaveTimer() {{
+            clearAutoSaveTimer();
+            updateAutoSaveStatus('pending');
+            
+            autoSaveTimer = setTimeout(() => {{
+                if (isDirty && autoSaveEnabled) {{
+                    updateAutoSaveStatus('saving');
+                    saveContent(true); // true indicates auto-save
+                }}
+            }}, 2000); // 2-second delay as per requirements
+        }}
+        
+        function clearAutoSaveTimer() {{
+            if (autoSaveTimer) {{
+                clearTimeout(autoSaveTimer);
+                autoSaveTimer = null;
+            }}
+        }}
+        
+        function updateAutoSaveStatus(status) {{
+            const statusElement = document.getElementById('auto-save-status');
+            statusElement.className = 'auto-save-indicator';
+            
+            switch (status) {{
+                case 'pending':
+                    statusElement.textContent = 'Auto-save in 2s...';
+                    break;
+                case 'saving':
+                    statusElement.textContent = 'Saving...';
+                    statusElement.classList.add('saving');
+                    break;
+                case 'saved':
+                    statusElement.textContent = 'Saved';
+                    statusElement.classList.add('saved');
+                    setTimeout(() => {{
+                        statusElement.textContent = 'Auto-save enabled';
+                        statusElement.className = 'auto-save-indicator';
+                    }}, 2000);
+                    break;
+                case 'idle':
+                default:
+                    statusElement.textContent = autoSaveEnabled ? 'Auto-save enabled' : 'Auto-save disabled';
+                    break;
+            }}
+        }}
+        
+        function saveContent(isAutoSave = false) {{
             const content = editor.value;
             sendMessage({{ type: 'content_update', session_id: sessionId, content: content, cursor_position: {{ line: 0, column: 0 }} }});
             sendMessage({{ type: 'save_request', session_id: sessionId }});
+            
+            if (!isAutoSave) {{
+                clearAutoSaveTimer();
+            }}
         }}
         
         function switchToLive() {{
@@ -252,6 +363,16 @@ impl RawEditorHandler {
                 editor.selectionStart = editor.selectionEnd = start + 1;
                 setDirty(true);
                 updateStatus();
+            }}
+        }});
+        
+        // Browser warning for unsaved changes
+        window.addEventListener('beforeunload', (e) => {{
+            if (isDirty) {{
+                const message = 'You have unsaved changes. Are you sure you want to leave?';
+                e.preventDefault();
+                e.returnValue = message;
+                return message;
             }}
         }});
         
@@ -393,7 +514,12 @@ impl WebSocketHandler for EditorWebSocketHandler {
 
                         let response = serde_json::json!({
                             "type": "save_complete",
-                            "session_id": session_id
+                            "session_id": session_id,
+                            "success": true,
+                            "timestamp": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs()
                         });
                         connection.send_text(response.to_string()).await?;
                     }
@@ -460,6 +586,14 @@ impl WebSocketHandler for EditorWebSocketHandler {
                             "success": true
                         });
                         let _ = connection.send_text(response.to_string()).await;
+                    }
+                    EditorMessage::AutoSaveStatus { .. } => {
+                        // Auto-save status messages are sent from server to client, not the other way
+                        tracing::debug!("Received auto-save status message from client (unexpected)");
+                    }
+                    EditorMessage::SaveComplete { .. } => {
+                        // Save complete messages are sent from server to client, not the other way
+                        tracing::debug!("Received save complete message from client (unexpected)");
                     }
                 },
                 Err(e) => {
@@ -618,6 +752,19 @@ impl LiveEditorHandler {
         }}
         .status-info {{ display: flex; gap: 16px; }}
         .dirty-indicator {{ color: var(--link-color, #89b4fa); font-weight: bold; }}
+        .auto-save-indicator {{ 
+            color: var(--text-color, #cdd6f4); 
+            font-size: 11px; 
+            opacity: 0.7;
+        }}
+        .auto-save-indicator.saving {{ 
+            color: var(--link-color, #89b4fa); 
+            opacity: 1;
+        }}
+        .auto-save-indicator.saved {{ 
+            color: #a6e3a1; 
+            opacity: 1;
+        }}
     </style>
 </head>
 <body>
@@ -636,6 +783,7 @@ impl LiveEditorHandler {
             <span id="cursor-position">Line 1, Column 1</span>
             <span id="word-count">0 words</span>
             <span id="dirty-status" class="dirty-indicator" style="display: none;">●</span>
+            <span id="auto-save-status" class="auto-save-indicator">Auto-save enabled</span>
         </div>
         <div>Live Mode</div>
     </div>
@@ -645,6 +793,9 @@ impl LiveEditorHandler {
         let isDirty = false;
         let ws = null;
         let lastContent = '';
+        let autoSaveEnabled = true;
+        let autoSaveTimer = null;
+        let lastSaveTime = null;
         
         function initWebSocket() {{
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -658,9 +809,24 @@ impl LiveEditorHandler {
         function handleWebSocketMessage(event) {{
             try {{
                 const message = JSON.parse(event.data);
-                if (message.type === 'live_content_update') {{
-                    editor.innerHTML = message.rendered_content;
-                    updateStatus();
+                switch (message.type) {{
+                    case 'live_content_update':
+                        editor.innerHTML = message.rendered_content;
+                        updateStatus();
+                        break;
+                    case 'save_complete':
+                        if (message.session_id === sessionId) {{
+                            setDirty(false);
+                            updateAutoSaveStatus('saved');
+                            lastSaveTime = new Date(message.timestamp);
+                        }}
+                        break;
+                    case 'auto_save_status':
+                        if (message.session_id === sessionId) {{
+                            autoSaveEnabled = message.enabled;
+                            updateAutoSaveStatus(message.pending_save ? 'saving' : 'idle');
+                        }}
+                        break;
                 }}
             }} catch (e) {{
                 console.error('Failed to parse WebSocket message:', e);
@@ -682,10 +848,66 @@ impl LiveEditorHandler {
         function setDirty(dirty) {{
             isDirty = dirty;
             document.getElementById('dirty-status').style.display = dirty ? 'inline' : 'none';
+            
+            if (dirty && autoSaveEnabled) {{
+                startAutoSaveTimer();
+            }} else if (!dirty) {{
+                clearAutoSaveTimer();
+            }}
         }}
         
-        function saveContent() {{
+        function startAutoSaveTimer() {{
+            clearAutoSaveTimer();
+            updateAutoSaveStatus('pending');
+            
+            autoSaveTimer = setTimeout(() => {{
+                if (isDirty && autoSaveEnabled) {{
+                    updateAutoSaveStatus('saving');
+                    saveContent(true); // true indicates auto-save
+                }}
+            }}, 2000); // 2-second delay as per requirements
+        }}
+        
+        function clearAutoSaveTimer() {{
+            if (autoSaveTimer) {{
+                clearTimeout(autoSaveTimer);
+                autoSaveTimer = null;
+            }}
+        }}
+        
+        function updateAutoSaveStatus(status) {{
+            const statusElement = document.getElementById('auto-save-status');
+            statusElement.className = 'auto-save-indicator';
+            
+            switch (status) {{
+                case 'pending':
+                    statusElement.textContent = 'Auto-save in 2s...';
+                    break;
+                case 'saving':
+                    statusElement.textContent = 'Saving...';
+                    statusElement.classList.add('saving');
+                    break;
+                case 'saved':
+                    statusElement.textContent = 'Saved';
+                    statusElement.classList.add('saved');
+                    setTimeout(() => {{
+                        statusElement.textContent = 'Auto-save enabled';
+                        statusElement.className = 'auto-save-indicator';
+                    }}, 2000);
+                    break;
+                case 'idle':
+                default:
+                    statusElement.textContent = autoSaveEnabled ? 'Auto-save enabled' : 'Auto-save disabled';
+                    break;
+            }}
+        }}
+        
+        function saveContent(isAutoSave = false) {{
             sendMessage({{ type: 'save_request', session_id: sessionId }});
+            
+            if (!isAutoSave) {{
+                clearAutoSaveTimer();
+            }}
         }}
         
         function switchToRaw() {{
@@ -761,6 +983,16 @@ impl LiveEditorHandler {
             if (e.ctrlKey || e.metaKey) {{
                 if (e.key === 's') {{ e.preventDefault(); saveContent(); }}
                 if (e.key === 'r') {{ e.preventDefault(); switchToRaw(); }}
+            }}
+        }});
+        
+        // Browser warning for unsaved changes
+        window.addEventListener('beforeunload', (e) => {{
+            if (isDirty) {{
+                const message = 'You have unsaved changes. Are you sure you want to leave?';
+                e.preventDefault();
+                e.returnValue = message;
+                return message;
             }}
         }});
         
