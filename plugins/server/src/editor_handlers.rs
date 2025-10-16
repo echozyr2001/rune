@@ -589,7 +589,9 @@ impl WebSocketHandler for EditorWebSocketHandler {
                     }
                     EditorMessage::AutoSaveStatus { .. } => {
                         // Auto-save status messages are sent from server to client, not the other way
-                        tracing::debug!("Received auto-save status message from client (unexpected)");
+                        tracing::debug!(
+                            "Received auto-save status message from client (unexpected)"
+                        );
                     }
                     EditorMessage::SaveComplete { .. } => {
                         // Save complete messages are sent from server to client, not the other way

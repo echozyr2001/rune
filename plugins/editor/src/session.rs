@@ -1,6 +1,9 @@
 //! Session management for editor instances
 
 use crate::editor_state::{CursorPosition, EditorMode, EditorState};
+use crate::file_sync::{
+    ConflictResolution, ConflictResolutionStrategy, ExternalChange, FileSync, FileSyncManager,
+};
 use crate::live_editor::{
     ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
 };
@@ -67,6 +70,10 @@ pub struct EditorSession {
     pub syntax_parser: MarkdownSyntaxParser,
     /// Live editor integration for rendering
     pub live_editor: LiveEditorIntegration,
+    /// Conflict resolution strategy for this session
+    pub conflict_strategy: ConflictResolutionStrategy,
+    /// Whether to monitor for external file changes
+    pub monitor_external_changes: bool,
 }
 
 impl EditorSession {
@@ -97,6 +104,8 @@ impl EditorSession {
             render_trigger_detector: RenderTriggerDetector::with_defaults(),
             syntax_parser: MarkdownSyntaxParser::new(),
             live_editor: LiveEditorIntegration::new(),
+            conflict_strategy: ConflictResolutionStrategy::PreferLocal,
+            monitor_external_changes: true,
         })
     }
 
@@ -246,22 +255,32 @@ pub struct SessionManager {
     auto_save_handle: Option<tokio::task::JoinHandle<()>>,
     /// Auto-save command sender
     auto_save_sender: Option<tokio::sync::mpsc::UnboundedSender<AutoSaveCommand>>,
+    /// File synchronization manager
+    file_sync: Arc<FileSyncManager>,
 }
 
 impl SessionManager {
     /// Create a new session manager
     pub fn new() -> Self {
+        // Use a default backup directory in temp
+        let backup_dir = std::env::temp_dir().join("rune-editor-backups");
+        let file_sync = Arc::new(FileSyncManager::new(backup_dir));
+
         Self {
             sessions: HashMap::new(),
             context: None,
             auto_save_handle: None,
             auto_save_sender: None,
+            file_sync,
         }
     }
 
     /// Initialize the session manager with plugin context
     pub async fn initialize(&mut self, context: PluginContext) -> Result<()> {
         self.context = Some(context);
+
+        // Initialize file sync manager
+        self.file_sync.initialize().await?;
 
         // Start auto-save background task
         self.start_auto_save_task().await?;
@@ -482,8 +501,9 @@ impl SessionManager {
     /// Start the auto-save background task
     async fn start_auto_save_task(&mut self) -> Result<()> {
         // Create a channel for auto-save commands
-        let (auto_save_tx, mut auto_save_rx) = tokio::sync::mpsc::unbounded_channel::<AutoSaveCommand>();
-        
+        let (auto_save_tx, mut auto_save_rx) =
+            tokio::sync::mpsc::unbounded_channel::<AutoSaveCommand>();
+
         // Store the sender for triggering auto-saves
         self.auto_save_sender = Some(auto_save_tx);
 
@@ -515,7 +535,7 @@ impl SessionManager {
                             }
                         }
                     }
-                    
+
                     Some(command) = auto_save_rx.recv() => {
                         match command {
                             AutoSaveCommand::StartTimer { session_id, response_tx } => {
@@ -821,10 +841,10 @@ impl SessionManager {
             let current_content = session.state.content.clone();
             session.state_mut().update_content(current_content);
             session.touch();
-            
+
             // Trigger auto-save if enabled
             self.trigger_auto_save(session_id).await?;
-            
+
             tracing::debug!("Updated active element content for session {}", session_id);
         }
 
@@ -832,14 +852,14 @@ impl SessionManager {
     }
 
     /// Trigger auto-save for a session with debouncing
-    /// 
+    ///
     /// This method implements the auto-save system with a 2-second debouncing delay.
     /// When called, it will:
     /// 1. Check if auto-save is enabled and the session has unsaved changes
     /// 2. Cancel any existing auto-save timer for the session
     /// 3. Start a new 2-second timer
     /// 4. Save the content automatically when the timer expires
-    /// 
+    ///
     /// The debouncing ensures that rapid typing doesn't trigger multiple saves.
     pub async fn trigger_auto_save(&mut self, session_id: Uuid) -> Result<()> {
         let session = self
@@ -854,10 +874,10 @@ impl SessionManager {
 
         if let Some(sender) = &self.auto_save_sender {
             let (response_tx, response_rx) = tokio::sync::oneshot::channel();
-            
+
             // Cancel any existing timer for this session
             let _ = sender.send(AutoSaveCommand::CancelTimer { session_id });
-            
+
             // Start new timer
             let _ = sender.send(AutoSaveCommand::StartTimer {
                 session_id,
@@ -878,7 +898,7 @@ impl SessionManager {
     }
 
     /// Get auto-save status for a session
-    /// 
+    ///
     /// Returns comprehensive auto-save status including:
     /// - Whether auto-save is enabled
     /// - If the session has unsaved changes (is dirty)
@@ -900,6 +920,185 @@ impl SessionManager {
         };
 
         Ok(status)
+    }
+
+    /// Check for external file changes for a session
+    ///
+    /// Detects if the file has been modified externally while being edited.
+    /// This is used to implement bidirectional synchronization.
+    pub async fn check_external_changes(&self, session_id: Uuid) -> Result<Option<ExternalChange>> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        if !session.monitor_external_changes {
+            return Ok(None);
+        }
+
+        self.file_sync
+            .detect_external_change(&session.file_path)
+            .await
+    }
+
+    /// Handle external file change with conflict resolution
+    ///
+    /// When an external change is detected, this method resolves any conflicts
+    /// between the local edits and external changes using the configured strategy.
+    pub async fn handle_external_change(
+        &mut self,
+        session_id: Uuid,
+        external_change: ExternalChange,
+    ) -> Result<ConflictResolution> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let local_content = session.state.content.clone();
+        let strategy = session.conflict_strategy;
+
+        // Resolve the conflict
+        let resolution = self
+            .file_sync
+            .resolve_conflict(&local_content, &external_change.new_content, strategy)
+            .await?;
+
+        // If resolution was successful, update the session content
+        if resolution.success {
+            self.set_content(session_id, resolution.content.clone())
+                .await?;
+            tracing::info!(
+                "Resolved external change for session {} using strategy {:?}",
+                session_id,
+                strategy
+            );
+        } else {
+            tracing::warn!(
+                "Could not auto-resolve conflict for session {}, {} unresolved regions",
+                session_id,
+                resolution.unresolved_conflicts.len()
+            );
+        }
+
+        Ok(resolution)
+    }
+
+    /// Store local backup for a session
+    ///
+    /// Creates a local backup of the session content. This is used when
+    /// the connection is lost to prevent data loss.
+    pub async fn store_session_backup(&self, session_id: Uuid) -> Result<()> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        self.file_sync
+            .store_local_backup(session_id, &session.state.content)
+            .await?;
+
+        tracing::debug!("Stored backup for session {}", session_id);
+        Ok(())
+    }
+
+    /// Restore session from local backup
+    ///
+    /// Retrieves and restores content from a local backup. This is used
+    /// when reconnecting after a connection loss.
+    pub async fn restore_session_from_backup(&mut self, session_id: Uuid) -> Result<bool> {
+        if let Some(backup_content) = self.file_sync.retrieve_local_backup(session_id).await? {
+            self.set_content(session_id, backup_content).await?;
+            tracing::info!("Restored session {} from backup", session_id);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Clear local backup for a session
+    ///
+    /// Removes the local backup after successful synchronization.
+    pub async fn clear_session_backup(&self, session_id: Uuid) -> Result<()> {
+        self.file_sync.clear_local_backup(session_id).await?;
+        tracing::debug!("Cleared backup for session {}", session_id);
+        Ok(())
+    }
+
+    /// Check if a session has a local backup
+    pub async fn has_session_backup(&self, session_id: Uuid) -> Result<bool> {
+        self.file_sync.has_local_backup(session_id).await
+    }
+
+    /// Set conflict resolution strategy for a session
+    pub async fn set_conflict_strategy(
+        &mut self,
+        session_id: Uuid,
+        strategy: ConflictResolutionStrategy,
+    ) -> Result<()> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        session.conflict_strategy = strategy;
+        tracing::debug!(
+            "Set conflict strategy to {:?} for session {}",
+            strategy,
+            session_id
+        );
+        Ok(())
+    }
+
+    /// Enable or disable external change monitoring for a session
+    pub async fn set_external_monitoring(&mut self, session_id: Uuid, enabled: bool) -> Result<()> {
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        session.monitor_external_changes = enabled;
+        tracing::debug!(
+            "Set external monitoring {} for session {}",
+            enabled,
+            session_id
+        );
+        Ok(())
+    }
+
+    /// Sync session content to file with backup
+    ///
+    /// Saves the session content to the file system and creates a backup.
+    /// If the save fails, the backup can be used for recovery.
+    pub async fn sync_session_to_file(&mut self, session_id: Uuid) -> Result<()> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        // Store backup before syncing
+        self.file_sync
+            .store_local_backup(session_id, &session.state.content)
+            .await?;
+
+        // Sync to file
+        let file_path = session.file_path.clone();
+        let content = session.state.content.clone();
+
+        self.file_sync.sync_to_file(&file_path, &content).await?;
+
+        // Clear backup after successful sync
+        self.file_sync.clear_local_backup(session_id).await?;
+
+        // Now get mutable access to mark as saved
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+        session.state_mut().mark_saved();
+
+        tracing::info!("Synced session {} to file", session_id);
+        Ok(())
     }
 }
 

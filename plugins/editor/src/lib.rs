@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 pub mod cursor_manager;
 pub mod editor_state;
+pub mod file_sync;
 pub mod inline_renderer;
 pub mod live_editor;
 pub mod render_trigger;
@@ -21,6 +22,10 @@ pub mod syntax_parser;
 
 pub use cursor_manager::{CursorManager, ElementMapping, MappingStats, PositionMapping};
 pub use editor_state::{CursorPosition, EditorMode, EditorState};
+pub use file_sync::{
+    ConflictRegion, ConflictResolution, ConflictResolutionStrategy, ExternalChange, FileSync,
+    FileSyncManager,
+};
 pub use inline_renderer::{InlineRenderer, MarkdownInlineRenderer, RenderedElement};
 pub use live_editor::{
     ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
