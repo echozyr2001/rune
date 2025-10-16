@@ -227,10 +227,8 @@ impl RuneEditorPlugin {
 
             // Publish render complete event
             if let Some(context) = &self.context {
-                let event = SystemEvent::render_complete(
-                    format!("{:x}", session_id.as_u128()),
-                    duration,
-                );
+                let event =
+                    SystemEvent::render_complete(format!("{:x}", session_id.as_u128()), duration);
                 context.event_bus.publish_system_event(event).await?;
             }
 
@@ -384,7 +382,9 @@ impl Plugin for RuneEditorPlugin {
             .await?;
 
         self.status = PluginStatus::Active;
-        tracing::info!("Editor plugin initialized successfully with file watcher and renderer integration");
+        tracing::info!(
+            "Editor plugin initialized successfully with file watcher and renderer integration"
+        );
         Ok(())
     }
 
@@ -686,16 +686,14 @@ impl EditorEvent {
 
     /// Serialize the event to JSON for WebSocket transmission
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self).map_err(|e| {
-            RuneError::Plugin(format!("Failed to serialize editor event: {}", e))
-        })
+        serde_json::to_string(self)
+            .map_err(|e| RuneError::Plugin(format!("Failed to serialize editor event: {}", e)))
     }
 
     /// Deserialize an event from JSON
     pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json).map_err(|e| {
-            RuneError::Plugin(format!("Failed to deserialize editor event: {}", e))
-        })
+        serde_json::from_str(json)
+            .map_err(|e| RuneError::Plugin(format!("Failed to deserialize editor event: {}", e)))
     }
 }
 

@@ -602,8 +602,13 @@ impl ServerPlugin {
             {
                 let handler = self.editor_ws_handler.read().await;
                 if let Some(editor_handler) = handler.as_ref() {
-                    editor_handler.set_markdown_file(current_file.to_path_buf()).await;
-                    info!("Updated editor WebSocket handler with file: {}", current_file.display());
+                    editor_handler
+                        .set_markdown_file(current_file.to_path_buf())
+                        .await;
+                    info!(
+                        "Updated editor WebSocket handler with file: {}",
+                        current_file.display()
+                    );
                 }
             }
 
@@ -638,7 +643,7 @@ impl ServerPlugin {
             registry
                 .register_websocket_handler(editor_ws_handler.clone())
                 .await?;
-            
+
             // Store the editor handler so we can update it later
             {
                 let mut handler = self.editor_ws_handler.write().await;
@@ -1336,8 +1341,13 @@ impl ServerEventHandler {
         {
             let handler = self.editor_ws_handler.read().await;
             if let Some(editor_handler) = handler.as_ref() {
-                editor_handler.set_markdown_file(file_path.to_path_buf()).await;
-                info!("Updated editor WebSocket handler with file: {}", file_path.display());
+                editor_handler
+                    .set_markdown_file(file_path.to_path_buf())
+                    .await;
+                info!(
+                    "Updated editor WebSocket handler with file: {}",
+                    file_path.display()
+                );
             }
         }
 

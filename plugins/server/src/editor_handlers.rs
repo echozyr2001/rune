@@ -64,15 +64,9 @@ pub enum EditorMessage {
         trigger_events: Vec<String>,
     },
     #[serde(rename = "render_markdown")]
-    RenderMarkdown {
-        session_id: String,
-        content: String,
-    },
+    RenderMarkdown { session_id: String, content: String },
     #[serde(rename = "markdown_rendered")]
-    MarkdownRendered {
-        session_id: String,
-        html: String,
-    },
+    MarkdownRendered { session_id: String, html: String },
     #[serde(rename = "update_element")]
     UpdateElement {
         session_id: String,
@@ -521,9 +515,9 @@ impl EditorWebSocketHandler {
 
         // Get the current markdown file path
         let markdown_file = self.markdown_file.read().await;
-        let file_path = markdown_file.as_ref().ok_or_else(|| {
-            RuneError::Server("No markdown file set for editor".to_string())
-        })?;
+        let file_path = markdown_file
+            .as_ref()
+            .ok_or_else(|| RuneError::Server("No markdown file set for editor".to_string()))?;
 
         // Create or update session
         if let Some(session) = sessions.get_mut(session_id) {
@@ -551,9 +545,9 @@ impl EditorWebSocketHandler {
     async fn handle_save_request(&self, session_id: &str) -> Result<()> {
         // Get the current markdown file path
         let markdown_file = self.markdown_file.read().await;
-        let file_path = markdown_file.as_ref().ok_or_else(|| {
-            RuneError::Server("No markdown file set for editor".to_string())
-        })?;
+        let file_path = markdown_file
+            .as_ref()
+            .ok_or_else(|| RuneError::Server("No markdown file set for editor".to_string()))?;
 
         // Get the content from the session
         let sessions = self.editor_sessions.read().await;
@@ -640,8 +634,12 @@ impl WebSocketHandler for EditorWebSocketHandler {
                         ref content,
                         ref cursor_position,
                     } => {
-                        self.handle_content_update(session_id, content.clone(), cursor_position.clone())
-                            .await?;
+                        self.handle_content_update(
+                            session_id,
+                            content.clone(),
+                            cursor_position.clone(),
+                        )
+                        .await?;
 
                         // Broadcast content update to all other clients
                         self.broadcast_editor_event(session_id.clone(), editor_msg)
@@ -787,7 +785,10 @@ impl WebSocketHandler for EditorWebSocketHandler {
                         )
                         .unwrap_or_else(|e| {
                             tracing::error!("Failed to render markdown: {}", e);
-                            format!("<p>Error rendering markdown: {}</p>", html_escape::encode_text(&e.to_string()))
+                            format!(
+                                "<p>Error rendering markdown: {}</p>",
+                                html_escape::encode_text(&e.to_string())
+                            )
                         });
 
                         // Send rendered HTML back to client
@@ -804,7 +805,9 @@ impl WebSocketHandler for EditorWebSocketHandler {
                     }
                     EditorMessage::MarkdownRendered { .. } => {
                         // This message is sent from server to client, not expected from client
-                        tracing::debug!("Received markdown_rendered message from client (unexpected)");
+                        tracing::debug!(
+                            "Received markdown_rendered message from client (unexpected)"
+                        );
                     }
                     EditorMessage::UpdateElement {
                         ref session_id,
