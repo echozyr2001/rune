@@ -4,6 +4,7 @@ use crate::editor_state::{CursorPosition, EditorMode, EditorState};
 use crate::file_sync::{
     ConflictResolution, ConflictResolutionStrategy, ExternalChange, FileSync, FileSyncManager,
 };
+use crate::keyboard_shortcuts::{KeyboardShortcutHandler, ShortcutAction, ShortcutResult, TextSelection};
 use crate::live_editor::{
     ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
 };
@@ -257,6 +258,8 @@ pub struct SessionManager {
     auto_save_sender: Option<tokio::sync::mpsc::UnboundedSender<AutoSaveCommand>>,
     /// File synchronization manager
     file_sync: Arc<FileSyncManager>,
+    /// Keyboard shortcut handler
+    keyboard_handler: KeyboardShortcutHandler,
 }
 
 impl SessionManager {
@@ -272,6 +275,7 @@ impl SessionManager {
             auto_save_handle: None,
             auto_save_sender: None,
             file_sync,
+            keyboard_handler: KeyboardShortcutHandler::new(),
         }
     }
 
@@ -1099,6 +1103,61 @@ impl SessionManager {
 
         tracing::info!("Synced session {} to file", session_id);
         Ok(())
+    }
+
+    /// Apply a keyboard shortcut action to a session
+    ///
+    /// Handles keyboard shortcuts for markdown formatting:
+    /// - Bold (Ctrl+B / Cmd+B): Wraps selected text with **
+    /// - Italic (Ctrl+I / Cmd+I): Wraps selected text with *
+    /// - Indent List (Tab): Adds indentation to list items
+    /// - Unindent List (Shift+Tab): Removes indentation from list items
+    ///
+    /// The method applies the shortcut, updates the session content,
+    /// and returns the result with the new cursor position.
+    pub async fn apply_keyboard_shortcut(
+        &mut self,
+        session_id: Uuid,
+        action: ShortcutAction,
+        selection: TextSelection,
+    ) -> Result<ShortcutResult> {
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or(EditorError::SessionNotFound(session_id))?;
+
+        let content = session.state.content.clone();
+        let cursor_position = session.state.cursor_position.clone();
+
+        // Apply the keyboard shortcut
+        let result = self
+            .keyboard_handler
+            .apply_shortcut(action.clone(), &content, selection, cursor_position);
+
+        if result.success {
+            // Update session content with the modified content
+            self.set_content(session_id, result.content.clone())
+                .await?;
+
+            // Update cursor position
+            self.update_cursor_position(session_id, result.cursor_position.clone())
+                .await?;
+
+            tracing::debug!(
+                "Applied keyboard shortcut {:?} to session {}",
+                action,
+                session_id
+            );
+        } else {
+            tracing::debug!(
+                "Keyboard shortcut {:?} not applied to session {}: {}",
+                action,
+                session_id,
+                result.message.as_deref().unwrap_or("unknown reason")
+            );
+        }
+
+        Ok(result)
     }
 }
 

@@ -15,6 +15,7 @@ pub mod cursor_manager;
 pub mod editor_state;
 pub mod file_sync;
 pub mod inline_renderer;
+pub mod keyboard_shortcuts;
 pub mod live_editor;
 pub mod render_trigger;
 pub mod session;
@@ -27,6 +28,9 @@ pub use file_sync::{
     FileSyncManager,
 };
 pub use inline_renderer::{InlineRenderer, MarkdownInlineRenderer, RenderedElement};
+pub use keyboard_shortcuts::{
+    KeyboardShortcutHandler, ShortcutAction, ShortcutResult, TextSelection,
+};
 pub use live_editor::{
     ClickToEditResult, LiveEditorIntegration, LiveEditorResult, ModeSwitchResult,
 };
@@ -134,6 +138,14 @@ pub trait EditorPlugin: Plugin {
 
     /// Trigger auto-save for a session (with debouncing)
     async fn trigger_auto_save(&self, session_id: Uuid) -> Result<()>;
+
+    /// Apply a keyboard shortcut action to a session
+    async fn apply_keyboard_shortcut(
+        &self,
+        session_id: Uuid,
+        action: ShortcutAction,
+        selection: TextSelection,
+    ) -> Result<ShortcutResult>;
 }
 
 /// Main editor plugin implementation
@@ -374,6 +386,18 @@ impl EditorPlugin for RuneEditorPlugin {
     async fn trigger_auto_save(&self, session_id: Uuid) -> Result<()> {
         let mut manager = self.session_manager.write().await;
         manager.trigger_auto_save(session_id).await
+    }
+
+    async fn apply_keyboard_shortcut(
+        &self,
+        session_id: Uuid,
+        action: ShortcutAction,
+        selection: TextSelection,
+    ) -> Result<ShortcutResult> {
+        let mut manager = self.session_manager.write().await;
+        manager
+            .apply_keyboard_shortcut(session_id, action, selection)
+            .await
     }
 }
 
