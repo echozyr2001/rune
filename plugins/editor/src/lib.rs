@@ -257,6 +257,7 @@ impl RuneEditorPlugin {
     ///
     /// When a file is modified externally (e.g., by another editor or git),
     /// this method detects the change and updates the session accordingly.
+    #[allow(dead_code)]
     async fn handle_external_file_change(&self, file_path: &PathBuf) -> Result<()> {
         let manager = self.session_manager.read().await;
 
