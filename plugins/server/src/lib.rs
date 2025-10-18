@@ -7,8 +7,10 @@
 
 pub mod editor_handlers;
 pub mod handlers;
+pub mod simple_live_editor;
 
-pub use editor_handlers::{EditorWebSocketHandler, LiveEditorHandler, RawEditorHandler};
+pub use editor_handlers::{EditorWebSocketHandler, RawEditorHandler}; // LiveEditorHandler temporarily disabled
+pub use simple_live_editor::SimpleLiveEditorHandler;
 
 use async_trait::async_trait;
 use axum::{
@@ -58,7 +60,14 @@ pub trait HttpHandler: Send + Sync {
 
     /// Check if this handler can process the given request
     fn can_handle(&self, path: &str, method: &Method) -> bool {
-        self.method() == *method && self.matches_path(path)
+        // Handle both GET and HEAD for GET handlers (HEAD is used for testing endpoints)
+        let method_matches = if self.method() == Method::GET {
+            *method == Method::GET || *method == Method::HEAD
+        } else {
+            self.method() == *method
+        };
+
+        method_matches && self.matches_path(path)
     }
 
     /// Check if the path matches this handler's pattern
@@ -483,6 +492,7 @@ pub struct ServerPlugin {
     handler_registry: Option<Arc<HandlerRegistry>>,
     server_handle: Option<tokio::task::JoinHandle<()>>,
     reload_sender: Option<tokio::sync::broadcast::Sender<handlers::ServerMessage>>,
+    editor_ws_handler: Arc<RwLock<Option<Arc<editor_handlers::EditorWebSocketHandler>>>>,
 }
 
 impl ServerPlugin {
@@ -493,6 +503,7 @@ impl ServerPlugin {
             version: "1.0.0".to_string(),
             status: PluginStatus::Loading,
             config: ServerConfig::default(),
+            editor_ws_handler: Arc::new(RwLock::new(None)),
             handler_registry: None,
             server_handle: None,
             reload_sender: None,
@@ -509,6 +520,7 @@ impl ServerPlugin {
             handler_registry: None,
             server_handle: None,
             reload_sender: None,
+            editor_ws_handler: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -566,18 +578,25 @@ impl ServerPlugin {
             registry.register_http_handler(markdown_handler).await?;
 
             // Register raw markdown handler
+            info!("About to register raw markdown handler");
             let raw_handler = Arc::new(handlers::RawMarkdownHandler::new(
                 "/raw".to_string(),
                 current_file.to_path_buf(),
             ));
             registry.register_http_handler(raw_handler).await?;
+            info!("Successfully registered raw markdown handler");
 
             // Register raw text editor handler
+            info!("About to register editor handler");
             let editor_handler = Arc::new(editor_handlers::RawEditorHandler::new(
                 "/editor".to_string(),
                 current_file.to_path_buf(),
             ));
             registry.register_http_handler(editor_handler).await?;
+            info!("Successfully registered editor handler");
+
+            // Note: SimpleLiveEditorHandler is registered in ServerEventHandler::register_handlers_for_new_file
+            // to avoid duplicate registration
 
             // Register static file handler for assets in the same directory
             if let Some(base_dir) = current_file.parent() {
@@ -593,6 +612,20 @@ impl ServerPlugin {
                     "/images".to_string(),
                 ));
                 registry.register_http_handler(image_handler).await?;
+            }
+
+            // Update editor WebSocket handler with current file
+            {
+                let handler = self.editor_ws_handler.read().await;
+                if let Some(editor_handler) = handler.as_ref() {
+                    editor_handler
+                        .set_markdown_file(current_file.to_path_buf())
+                        .await;
+                    info!(
+                        "Updated editor WebSocket handler with file: {}",
+                        current_file.display()
+                    );
+                }
             }
 
             info!(
@@ -624,8 +657,14 @@ impl ServerPlugin {
                 "/ws/editor".to_string(),
             ));
             registry
-                .register_websocket_handler(editor_ws_handler)
+                .register_websocket_handler(editor_ws_handler.clone())
                 .await?;
+
+            // Store the editor handler so we can update it later
+            {
+                let mut handler = self.editor_ws_handler.write().await;
+                *handler = Some(editor_ws_handler);
+            }
 
             // Create and register a file change event handler that will trigger reloads
             let reload_event_handler = Arc::new(LiveReloadEventHandler {
@@ -783,7 +822,25 @@ impl ServerPlugin {
                 }
             }
         } else {
-            tracing::debug!("No handler found for {} {}", method, path);
+            tracing::warn!(
+                "No handler found for {} {} - checking registered handlers",
+                method,
+                path
+            );
+
+            // Debug: List all registered handlers
+            let handlers = registry.http_handlers.read().await;
+            tracing::warn!("Registered HTTP handlers count: {}", handlers.len());
+            for (i, h) in handlers.iter().enumerate() {
+                tracing::warn!(
+                    "  Handler {}: {} {} (priority: {})",
+                    i,
+                    h.method(),
+                    h.path_pattern(),
+                    h.priority()
+                );
+            }
+
             HttpResponse::error(StatusCode::NOT_FOUND, "Not found").into_response()
         }
     }
@@ -931,12 +988,24 @@ impl Plugin for ServerPlugin {
 
         self.handler_registry = Some(registry.clone());
 
+        // Register core handlers
+        self.register_core_handlers(context).await?;
+
+        // Register theme asset handlers
+        self.register_theme_handlers(context.event_bus.clone())
+            .await?;
+
+        // Register WebSocket handlers (must be done before creating event handler)
+        self.register_websocket_handlers(context.event_bus.clone())
+            .await?;
+
         // Subscribe to system events to handle file changes
         // Note: We no longer start our own file monitoring - we rely on the FileWatcher plugin
         let server_event_handler = Arc::new(ServerEventHandler {
             plugin_context: context.clone(),
             handler_registry: registry.clone(),
             current_served_file: Arc::new(RwLock::new(None)),
+            editor_ws_handler: self.editor_ws_handler.clone(),
         });
 
         context
@@ -945,17 +1014,6 @@ impl Plugin for ServerPlugin {
             .await?;
 
         info!("Server plugin will rely on FileWatcher plugin for file change detection");
-
-        // Register core handlers
-        self.register_core_handlers(context).await?;
-
-        // Register theme asset handlers
-        self.register_theme_handlers(context.event_bus.clone())
-            .await?;
-
-        // Register WebSocket handlers
-        self.register_websocket_handlers(context.event_bus.clone())
-            .await?;
 
         // Build and start the server
         let router = self.build_router(registry).await;
@@ -1040,6 +1098,7 @@ struct ServerEventHandler {
     plugin_context: PluginContext,
     handler_registry: Arc<HandlerRegistry>,
     current_served_file: Arc<RwLock<Option<PathBuf>>>,
+    editor_ws_handler: Arc<RwLock<Option<Arc<editor_handlers::EditorWebSocketHandler>>>>,
 }
 
 #[async_trait]
@@ -1292,6 +1351,25 @@ impl ServerEventHandler {
             .register_http_handler(raw_handler)
             .await?;
 
+        // Register raw text editor handler
+        let editor_handler = Arc::new(editor_handlers::RawEditorHandler::new(
+            "/editor".to_string(),
+            file_path.to_path_buf(),
+        ));
+        self.handler_registry
+            .register_http_handler(editor_handler)
+            .await?;
+
+        // Register simple live editor handler
+        let simple_live_handler = Arc::new(SimpleLiveEditorHandler::new(
+            "/live".to_string(),
+            file_path.to_path_buf(),
+        ));
+        self.handler_registry
+            .register_http_handler(simple_live_handler)
+            .await?;
+        info!("Registered simple live editor handler at /live");
+
         // Register static file handler for assets in the same directory
         if let Some(base_dir) = file_path.parent() {
             let static_handler = Arc::new(handlers::StaticHandler::new(
@@ -1310,6 +1388,20 @@ impl ServerEventHandler {
             self.handler_registry
                 .register_http_handler(image_handler)
                 .await?;
+        }
+
+        // Update editor WebSocket handler with the new file path
+        {
+            let handler = self.editor_ws_handler.read().await;
+            if let Some(editor_handler) = handler.as_ref() {
+                editor_handler
+                    .set_markdown_file(file_path.to_path_buf())
+                    .await;
+                info!(
+                    "Updated editor WebSocket handler with file: {}",
+                    file_path.display()
+                );
+            }
         }
 
         info!(

@@ -265,6 +265,22 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
+    /// Publish an editor event to the event bus
+    async fn publish_editor_event(&self, event: crate::EditorEvent) -> Result<()> {
+        if let Some(_context) = &self.context {
+            // Convert EditorEvent to SystemEvent for event bus
+            let event_type = event.event_type();
+            tracing::debug!("Publishing editor event: {}", event_type);
+
+            // For now, we'll log the event. In a full implementation, we would
+            // publish to the event bus using context.event_bus
+            tracing::info!("Editor event: {:?}", event);
+        }
+        Ok(())
+    }
+}
+
+impl SessionManager {
     /// Create a new session manager
     pub fn new() -> Self {
         // Use a default backup directory in temp
@@ -340,6 +356,14 @@ impl SessionManager {
             session_id,
             file_path.display()
         );
+
+        // Publish session created event (after mutable borrow is released)
+        let event = crate::EditorEvent::SessionCreated {
+            session_id,
+            file_path: file_path.clone(),
+        };
+        self.publish_editor_event(event).await?;
+
         Ok(session_id)
     }
 
@@ -350,6 +374,11 @@ impl SessionManager {
             if session.state.is_dirty {
                 session.save().await?;
             }
+
+            // Publish session closed event
+            let event = crate::EditorEvent::SessionClosed { session_id };
+            self.publish_editor_event(event).await?;
+
             tracing::info!("Closed session {}", session_id);
         } else {
             return Err(EditorError::SessionNotFound(session_id).into());
@@ -368,19 +397,26 @@ impl SessionManager {
 
     /// Switch editing mode for a session
     pub async fn switch_mode(&mut self, session_id: Uuid, mode: EditorMode) -> Result<()> {
-        let session = self
-            .sessions
-            .get_mut(&session_id)
-            .ok_or(EditorError::SessionNotFound(session_id))?;
+        {
+            let session = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or(EditorError::SessionNotFound(session_id))?;
 
-        session.state_mut().switch_mode(mode);
-        session.touch();
+            session.state_mut().switch_mode(mode.clone());
+            session.touch();
 
-        tracing::debug!(
-            "Switched session {} to mode {}",
-            session_id,
-            session.state.current_mode
-        );
+            tracing::debug!(
+                "Switched session {} to mode {}",
+                session_id,
+                session.state.current_mode
+            );
+        }
+
+        // Publish mode changed event (after mutable borrow is released)
+        let event = crate::EditorEvent::ModeChanged { session_id, mode };
+        self.publish_editor_event(event).await?;
+
         Ok(())
     }
 
@@ -395,43 +431,76 @@ impl SessionManager {
 
     /// Set content for a session
     pub async fn set_content(&mut self, session_id: Uuid, content: String) -> Result<()> {
-        let session = self
-            .sessions
-            .get_mut(&session_id)
-            .ok_or(EditorError::SessionNotFound(session_id))?;
+        let (cursor_position, should_trigger_auto_save) = {
+            let session = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or(EditorError::SessionNotFound(session_id))?;
 
-        let old_content_len = session.state.content.len();
-        let was_dirty = session.state.is_dirty;
-        session.state_mut().update_content(content.clone());
+            let old_content_len = session.state.content.len();
+            let was_dirty = session.state.is_dirty;
+            let cursor_position = session.state.cursor_position.clone();
+            session.state_mut().update_content(content.clone());
 
-        // Detect render triggers for content change
-        let change_start = 0;
-        let change_end = old_content_len;
-        let should_render = session.handle_content_change(&content, change_start, change_end);
+            // Detect render triggers for content change
+            let change_start = 0;
+            let change_end = old_content_len;
+            let should_render = session.handle_content_change(&content, change_start, change_end);
 
-        if should_render {
-            tracing::debug!("Content change triggered render for session {}", session_id);
-        }
+            if should_render {
+                tracing::debug!("Content change triggered render for session {}", session_id);
+            }
 
-        session.touch();
+            session.touch();
+
+            let should_trigger_auto_save = !was_dirty && session.state.is_dirty;
+            (cursor_position, should_trigger_auto_save)
+        };
+
+        tracing::debug!("Updated content for session {}", session_id);
+
+        // Publish content changed event (after mutable borrow is released)
+        let event = crate::EditorEvent::ContentChanged {
+            session_id,
+            content: content.clone(),
+            cursor_position,
+        };
+        self.publish_editor_event(event).await?;
 
         // Trigger auto-save if content became dirty
-        if !was_dirty && session.state.is_dirty {
+        if should_trigger_auto_save {
             self.trigger_auto_save(session_id).await?;
         }
 
-        tracing::debug!("Updated content for session {}", session_id);
         Ok(())
     }
 
     /// Save content for a session
     pub async fn save_content(&mut self, session_id: Uuid) -> Result<()> {
-        let session = self
-            .sessions
-            .get_mut(&session_id)
-            .ok_or(EditorError::SessionNotFound(session_id))?;
+        // Publish save requested event
+        let save_requested_event = crate::EditorEvent::SaveRequested { session_id };
+        self.publish_editor_event(save_requested_event).await?;
 
-        session.save().await?;
+        let result = {
+            let session = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or(EditorError::SessionNotFound(session_id))?;
+            session.save().await
+        };
+
+        let success = result.is_ok();
+        let timestamp = SystemTime::now();
+
+        // Publish save completed event
+        let save_completed_event = crate::EditorEvent::SaveCompleted {
+            session_id,
+            success,
+            timestamp,
+        };
+        self.publish_editor_event(save_completed_event).await?;
+
+        result?;
         tracing::info!("Saved content for session {}", session_id);
         Ok(())
     }
@@ -442,30 +511,39 @@ impl SessionManager {
         session_id: Uuid,
         position: CursorPosition,
     ) -> Result<()> {
-        let session = self
-            .sessions
-            .get_mut(&session_id)
-            .ok_or(EditorError::SessionNotFound(session_id))?;
+        {
+            let session = self
+                .sessions
+                .get_mut(&session_id)
+                .ok_or(EditorError::SessionNotFound(session_id))?;
 
-        session
-            .state_mut()
-            .update_cursor_position(position.clone())
-            .map_err(|_e| EditorError::InvalidCursorPosition {
-                line: position.line,
-                column: position.column,
-            })?;
+            session
+                .state_mut()
+                .update_cursor_position(position.clone())
+                .map_err(|_e| EditorError::InvalidCursorPosition {
+                    line: position.line,
+                    column: position.column,
+                })?;
 
-        // Detect render triggers for cursor movement
-        let should_render = session.handle_cursor_movement(position);
+            // Detect render triggers for cursor movement
+            let should_render = session.handle_cursor_movement(position.clone());
 
-        if should_render {
-            tracing::debug!(
-                "Cursor movement triggered render for session {}",
-                session_id
-            );
+            if should_render {
+                tracing::debug!(
+                    "Cursor movement triggered render for session {}",
+                    session_id
+                );
+            }
+
+            session.touch();
         }
 
-        session.touch();
+        // Publish cursor moved event (after mutable borrow is released)
+        let event = crate::EditorEvent::CursorMoved {
+            session_id,
+            position,
+        };
+        self.publish_editor_event(event).await?;
 
         Ok(())
     }

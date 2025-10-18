@@ -29,6 +29,343 @@
             opacity: 1;
             transition: opacity 0.1s ease-in;
         }
+
+        /* Editor Mode Styles */
+        body.editor-mode {
+            margin: 0;
+            padding: 0;
+            max-width: 100%;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .editor-toolbar {
+            display: none;
+            background: var(--code-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 8px 16px;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        body.editor-mode .editor-toolbar {
+            display: flex;
+        }
+
+        .editor-toolbar-left {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .editor-toolbar-right {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .editor-mode-toggle {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-color);
+            border-radius: 6px;
+            padding: 2px;
+        }
+
+        .mode-btn {
+            background: transparent;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-color);
+            transition: all 0.2s ease;
+        }
+
+        .mode-btn:hover {
+            background: var(--border-color-light);
+        }
+
+        .mode-btn.active {
+            background: var(--link-color);
+            color: var(--bg-color);
+        }
+
+        .editor-btn {
+            background: var(--link-color);
+            color: var(--bg-color);
+            border: none;
+            padding: 6px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+
+        .editor-btn:hover {
+            opacity: 0.8;
+        }
+
+        .editor-btn.secondary {
+            background: var(--border-color);
+            color: var(--text-color);
+        }
+
+        .editor-container {
+            display: none;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        body.editor-mode .editor-container {
+            display: flex;
+            flex-direction: column;
+        }
+
+        body.editor-mode #content {
+            max-width: 100%;
+            margin: 0;
+            padding: 20px;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        /* Raw Editor Mode */
+        .raw-editor {
+            display: none;
+            flex: 1;
+            padding: 0;
+        }
+
+        .raw-editor.active {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .raw-textarea {
+            flex: 1;
+            width: 100%;
+            background: var(--bg-color);
+            color: var(--text-color);
+            border: none;
+            outline: none;
+            padding: 20px;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            resize: none;
+            tab-size: 4;
+        }
+
+        /* Live Editor Mode - WYSIWYG style like Typora */
+        .live-editor {
+            display: none;
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .live-editor.active {
+            display: block;
+        }
+
+        .live-content {
+            max-width: 900px;
+            margin: 0 auto;
+            outline: none;
+            color: var(--text-color);
+            line-height: 1.6;
+        }
+
+        /* Ensure live content elements are visible */
+        .live-content h1,
+        .live-content h2,
+        .live-content h3,
+        .live-content h4,
+        .live-content h5,
+        .live-content h6,
+        .live-content p,
+        .live-content li,
+        .live-content blockquote {
+            color: var(--text-color);
+        }
+
+        /* Editable elements in live mode */
+        .live-content [contenteditable="true"] {
+            outline: none;
+            cursor: text;
+        }
+
+        /* Editing state - show raw markdown */
+        .live-content .editing {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            background: var(--code-bg);
+            padding: 4px 8px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            display: block;
+            margin: 8px 0;
+        }
+
+        /* Hover effect for editable elements */
+        .live-content p:hover,
+        .live-content h1:hover,
+        .live-content h2:hover,
+        .live-content h3:hover,
+        .live-content h4:hover,
+        .live-content h5:hover,
+        .live-content h6:hover,
+        .live-content li:hover,
+        .live-content blockquote:hover {
+            background: rgba(137, 180, 250, 0.05);
+            border-radius: 4px;
+            cursor: text;
+        }
+
+        /* Active editing element */
+        .live-content .active-edit {
+            background: rgba(137, 180, 250, 0.1);
+            border-radius: 4px;
+            padding: 4px;
+        }
+
+        /* Preview Mode (default) */
+        .preview-mode {
+            display: block;
+        }
+
+        body.editor-mode .preview-mode {
+            display: none;
+        }
+
+        body.editor-mode .preview-mode.active {
+            display: block;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        /* Status Bar */
+        .editor-status-bar {
+            display: none;
+            background: var(--code-bg);
+            border-top: 1px solid var(--border-color);
+            padding: 4px 16px;
+            font-size: 12px;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        body.editor-mode .editor-status-bar {
+            display: flex;
+        }
+
+        .status-left, .status-right {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+        }
+
+        .status-item {
+            color: var(--text-color);
+            opacity: 0.7;
+        }
+
+        .dirty-indicator {
+            color: var(--link-color);
+            font-weight: bold;
+            opacity: 1;
+        }
+
+        .connection-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #a6e3a1;
+        }
+
+        .connection-status.disconnected {
+            background: #f38ba8;
+        }
+
+        .auto-save-status.saving {
+            color: var(--link-color);
+            opacity: 1;
+        }
+
+        .auto-save-status.saved {
+            color: #a6e3a1;
+            opacity: 1;
+        }
+
+        /* Keyboard Shortcuts Help */
+        .shortcuts-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 2000;
+            backdrop-filter: blur(4px);
+            align-items: center;
+            justify-content: center;
+        }
+
+        .shortcuts-overlay.show {
+            display: flex;
+        }
+
+        .shortcuts-content {
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .shortcuts-content h4 {
+            margin: 0 0 16px 0;
+            color: var(--text-color);
+            font-size: 18px;
+        }
+
+        .shortcuts-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .shortcut-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px;
+            background: var(--code-bg);
+            border-radius: 6px;
+        }
+
+        .shortcut-item kbd {
+            background: var(--border-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            border: 1px solid var(--border-color-light);
+        }
+
+        .shortcut-item span {
+            color: var(--text-color);
+            font-size: 13px;
+        }
         :root {
             --bg-color: #fff;
             --text-color: #333;
@@ -294,6 +631,939 @@
 
     <script>
         let lastModified = Date.now();
+        
+        // Editor State Management
+        let editorState = {
+            mode: 'preview', // 'preview', 'raw', 'live'
+            isDirty: false,
+            content: '',
+            originalContent: '',
+            cursorPosition: { line: 1, column: 1, absolute: 0 },
+            autoSaveEnabled: true,
+            autoSaveTimer: null,
+            lastSaveTime: null,
+            sessionId: null,
+            isConnected: false
+        };
+
+        // Initialize editor state from page content
+        async function initEditorState() {
+            // Fetch the raw markdown content from the server
+            try {
+                const response = await fetch('/raw');
+                if (response.ok) {
+                    const rawContent = await response.text();
+                    editorState.originalContent = rawContent;
+                    editorState.content = rawContent;
+                    console.log('📄 Loaded raw markdown content');
+                } else {
+                    console.error('Failed to fetch raw content');
+                    // Fallback to text content
+                    const contentElement = document.getElementById('content');
+                    if (contentElement) {
+                        editorState.originalContent = contentElement.textContent || '';
+                        editorState.content = editorState.originalContent;
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching raw content:', error);
+                // Fallback to text content
+                const contentElement = document.getElementById('content');
+                if (contentElement) {
+                    editorState.originalContent = contentElement.textContent || '';
+                    editorState.content = editorState.originalContent;
+                }
+            }
+        }
+
+        // Enter editor mode
+        async function enterEditorMode() {
+            document.body.classList.add('editor-mode');
+            document.getElementById('preview-theme-toggle').style.display = 'none';
+            document.getElementById('editor-toggle-btn').style.display = 'none';
+            
+            // Initialize editor content (wait for it to load)
+            await initEditorState();
+            switchEditorMode('preview');
+        }
+
+        // Exit editor mode
+        function exitEditorMode() {
+            if (editorState.isDirty) {
+                if (!confirm('You have unsaved changes. Are you sure you want to exit?')) {
+                    return;
+                }
+            }
+            
+            document.body.classList.remove('editor-mode');
+            document.getElementById('preview-theme-toggle').style.display = 'block';
+            document.getElementById('editor-toggle-btn').style.display = 'block';
+            editorState.mode = 'preview';
+            updateModeButtons();
+        }
+
+        // Switch editor mode
+        function switchEditorMode(mode) {
+            // Save current content before switching
+            if (editorState.mode === 'raw') {
+                const textarea = document.getElementById('raw-textarea');
+                editorState.content = textarea.value;
+            } else if (editorState.mode === 'live') {
+                // In Live mode, extract markdown from document structure
+                extractMarkdownFromLive();
+            }
+
+            // Hide all modes
+            document.getElementById('raw-editor').classList.remove('active');
+            document.getElementById('live-editor').classList.remove('active');
+            document.getElementById('preview-mode').classList.remove('active');
+
+            // Show selected mode
+            editorState.mode = mode;
+            
+            if (mode === 'raw') {
+                document.getElementById('raw-editor').classList.add('active');
+                const textarea = document.getElementById('raw-textarea');
+                textarea.value = editorState.content;
+                textarea.focus();
+                updateEditorStats();
+            } else if (mode === 'live') {
+                document.getElementById('live-editor').classList.add('active');
+                const liveContent = document.getElementById('live-content');
+                
+                // Render markdown to HTML and make it editable
+                renderLiveContent();
+                
+                liveContent.focus();
+                updateEditorStats();
+            } else {
+                document.getElementById('preview-mode').classList.add('active');
+                // Render content in preview mode
+                renderPreview(editorState.content);
+            }
+
+            updateModeButtons();
+            updateStatusBar();
+        }
+
+        // Update mode buttons
+        function updateModeButtons() {
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            const modeMap = {
+                'preview': 'preview-mode-btn',
+                'raw': 'raw-mode-btn',
+                'live': 'live-mode-btn'
+            };
+            
+            const activeBtn = document.getElementById(modeMap[editorState.mode]);
+            if (activeBtn) {
+                activeBtn.classList.add('active');
+            }
+        }
+
+        // Render preview
+        async function renderPreview(content) {
+            // Trigger rendering via WebSocket
+            const contentElement = document.getElementById('content');
+            if (contentElement && editorState.isConnected && editorState.sessionId) {
+                sendEditorMessage({
+                    type: 'trigger_render',
+                    session_id: editorState.sessionId,
+                    trigger_events: ['preview_mode']
+                });
+            }
+        }
+
+        // Live mode state
+        let liveEditingElement = null;
+        let liveOriginalMarkdown = '';
+        let liveElementMap = new Map(); // Map elements to their markdown source
+
+        // Render live content (initial render)
+        async function renderLiveContent() {
+            const liveContent = document.getElementById('live-content');
+            if (!liveContent) {
+                console.error('Live content element not found');
+                return;
+            }
+
+            console.log('Rendering live content, connected:', editorState.isConnected, 'sessionId:', editorState.sessionId);
+            console.log('Content length:', editorState.content.length);
+
+            // If not connected yet, wait for connection
+            if (!editorState.isConnected || !editorState.sessionId) {
+                console.log('Waiting for WebSocket connection...');
+                // Show a loading message
+                liveContent.innerHTML = '<p style="text-align: center; color: var(--text-color); opacity: 0.5;">Connecting to server...</p>';
+                setTimeout(renderLiveContent, 500);
+                return;
+            }
+
+            // Send render request to server
+            console.log('Sending render_markdown request');
+            sendEditorMessage({
+                type: 'render_markdown',
+                session_id: editorState.sessionId,
+                content: editorState.content
+            });
+
+            // Set a timeout to show error if no response
+            setTimeout(() => {
+                if (liveContent.innerHTML.includes('Connecting') || liveContent.innerHTML === '') {
+                    console.error('No response from server, showing fallback content');
+                    // Fallback: show the preview content
+                    const previewContent = document.getElementById('content');
+                    if (previewContent) {
+                        liveContent.innerHTML = previewContent.innerHTML;
+                        parseAndStoreMarkdown(liveContent);
+                    } else {
+                        liveContent.innerHTML = '<p>Error: Could not load content. Please try switching to Raw mode.</p>';
+                    }
+                }
+            }, 3000);
+        }
+
+        // Extract markdown from live content
+        function extractMarkdownFromLive() {
+            // For now, we keep the markdown in editorState.content
+            // In a full implementation, we would reconstruct markdown from the DOM
+            console.log('Extracting markdown from live content');
+        }
+
+        // Make an element editable in live mode
+        function makeElementEditable(element) {
+            if (!element) return;
+
+            // Deactivate previous element
+            if (liveEditingElement && liveEditingElement !== element) {
+                deactivateElement(liveEditingElement);
+            }
+
+            // Get the markdown source for this element
+            const markdown = getElementMarkdown(element);
+            liveOriginalMarkdown = markdown;
+
+            // Make element editable and show raw markdown
+            element.contentEditable = 'true';
+            element.classList.add('editing', 'active-edit');
+            element.textContent = markdown;
+            element.focus();
+
+            liveEditingElement = element;
+
+            // Move cursor to end
+            const range = document.createRange();
+            const sel = window.getSelection();
+            if (element.childNodes.length > 0) {
+                range.setStart(element.childNodes[0], element.textContent.length);
+                range.collapse(true);
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }
+
+        // Deactivate element editing
+        function deactivateElement(element) {
+            if (!element) return;
+
+            const markdown = element.textContent;
+            
+            // If content changed, render it
+            if (markdown !== liveOriginalMarkdown) {
+                setDirty(true);
+                updateElementMarkdown(element, markdown);
+                renderElement(element, markdown);
+            } else {
+                // Restore original rendered content
+                renderElement(element, markdown);
+            }
+
+            element.contentEditable = 'false';
+            element.classList.remove('editing', 'active-edit');
+            liveEditingElement = null;
+        }
+
+        // Get markdown source for an element
+        function getElementMarkdown(element) {
+            // Try to get from map first
+            if (liveElementMap.has(element)) {
+                return liveElementMap.get(element);
+            }
+
+            // Otherwise, convert HTML back to markdown (simplified)
+            const tagName = element.tagName.toLowerCase();
+            
+            // For complex elements, try to preserve formatting
+            let text = '';
+            if (element.innerHTML.includes('<')) {
+                // Has nested HTML, try to convert
+                text = htmlToMarkdown(element);
+            } else {
+                text = element.textContent;
+            }
+
+            switch (tagName) {
+                case 'h1':
+                    return '# ' + text;
+                case 'h2':
+                    return '## ' + text;
+                case 'h3':
+                    return '### ' + text;
+                case 'h4':
+                    return '#### ' + text;
+                case 'h5':
+                    return '##### ' + text;
+                case 'h6':
+                    return '###### ' + text;
+                case 'p':
+                    return text;
+                case 'li':
+                    return '- ' + text;
+                case 'blockquote':
+                    return '> ' + text;
+                case 'pre':
+                    // Code block
+                    const code = element.querySelector('code');
+                    if (code) {
+                        const lang = code.className.replace('language-', '');
+                        return '```' + lang + '\n' + code.textContent + '\n```';
+                    }
+                    return '```\n' + element.textContent + '\n```';
+                case 'hr':
+                    return '---';
+                case 'ul':
+                case 'ol':
+                    // List container, skip
+                    return '';
+                default:
+                    return text;
+            }
+        }
+
+        // Simple HTML to Markdown converter
+        function htmlToMarkdown(element) {
+            let markdown = '';
+            const nodes = element.childNodes;
+            
+            for (let node of nodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    markdown += node.textContent;
+                } else if (node.nodeType === Node.ELEMENT_NODE) {
+                    const tag = node.tagName.toLowerCase();
+                    const text = node.textContent;
+                    
+                    switch (tag) {
+                        case 'strong':
+                        case 'b':
+                            markdown += '**' + text + '**';
+                            break;
+                        case 'em':
+                        case 'i':
+                            markdown += '*' + text + '*';
+                            break;
+                        case 'code':
+                            markdown += '`' + text + '`';
+                            break;
+                        case 'a':
+                            const href = node.getAttribute('href');
+                            markdown += '[' + text + '](' + href + ')';
+                            break;
+                        case 'img':
+                            const src = node.getAttribute('src');
+                            const alt = node.getAttribute('alt') || '';
+                            markdown += '![' + alt + '](' + src + ')';
+                            break;
+                        default:
+                            markdown += text;
+                    }
+                }
+            }
+            
+            return markdown;
+        }
+
+        // Update element's markdown source
+        function updateElementMarkdown(element, markdown) {
+            liveElementMap.set(element, markdown);
+            
+            // Update the full document markdown
+            rebuildMarkdownFromLive();
+        }
+
+        // Rebuild full markdown from live content
+        function rebuildMarkdownFromLive() {
+            const liveContent = document.getElementById('live-content');
+            if (!liveContent) {
+                console.warn('Live content element not found for rebuild');
+                return;
+            }
+
+            console.log('Rebuilding markdown from live content');
+            
+            // Use the original content if no edits were made
+            if (liveElementMap.size === 0) {
+                console.log('No edits made, using original content');
+                return;
+            }
+
+            const lines = [];
+            const elements = liveContent.children; // Get direct children only
+            
+            for (let i = 0; i < elements.length; i++) {
+                const element = elements[i];
+                const markdown = liveElementMap.get(element) || getElementMarkdown(element);
+                if (markdown && markdown.trim()) {
+                    lines.push(markdown);
+                }
+            }
+
+            if (lines.length > 0) {
+                editorState.content = lines.join('\n\n');
+                console.log('Rebuilt markdown, length:', editorState.content.length);
+            } else {
+                console.warn('No content extracted, keeping original');
+            }
+        }
+
+        // Render a single element
+        async function renderElement(element, markdown) {
+            // Send render request for this element
+            if (editorState.isConnected && editorState.sessionId) {
+                sendEditorMessage({
+                    type: 'render_markdown',
+                    session_id: editorState.sessionId,
+                    content: markdown,
+                    element_id: element.dataset.elementId || ''
+                });
+            }
+        }
+
+        // Parse and store markdown for each element
+        function parseAndStoreMarkdown(container) {
+            // Split the original markdown by lines
+            const lines = editorState.content.split('\n');
+            const elements = container.querySelectorAll('h1, h2, h3, h4, h5, h6, p, li, blockquote, pre');
+            
+            let lineIndex = 0;
+            elements.forEach((element, index) => {
+                // Assign unique ID
+                element.dataset.elementId = 'elem-' + index;
+                
+                // Try to match element with markdown line
+                const text = element.textContent.trim();
+                
+                // Find matching line in markdown
+                for (let i = lineIndex; i < lines.length; i++) {
+                    const line = lines[i].trim();
+                    if (line && (line.includes(text) || text.includes(line.replace(/^#+\s*/, '').replace(/^>\s*/, '').replace(/^-\s*/, '')))) {
+                        liveElementMap.set(element, lines[i]);
+                        lineIndex = i + 1;
+                        break;
+                    }
+                }
+                
+                // If no match found, generate markdown from element
+                if (!liveElementMap.has(element)) {
+                    liveElementMap.set(element, getElementMarkdown(element));
+                }
+            });
+        }
+
+        // Save content
+        async function saveContent() {
+            // Deactivate any editing element first
+            if (liveEditingElement) {
+                deactivateElement(liveEditingElement);
+            }
+
+            // Get current content based on mode
+            let content = editorState.content;
+            if (editorState.mode === 'raw') {
+                const textarea = document.getElementById('raw-textarea');
+                content = textarea.value;
+                // Update editorState with the latest content
+                editorState.content = content;
+            } else if (editorState.mode === 'live') {
+                // In Live mode, rebuild markdown from the live content
+                rebuildMarkdownFromLive();
+                content = editorState.content;
+            } else {
+                // Preview mode - save current content
+                content = editorState.content;
+            }
+
+            // Send save request via WebSocket
+            if (editorState.isConnected && editorState.sessionId) {
+                // First send content update
+                sendEditorMessage({
+                    type: 'content_update',
+                    session_id: editorState.sessionId,
+                    content: content,
+                    cursor_position: {
+                        line: editorState.cursorPosition.line,
+                        column: editorState.cursorPosition.column,
+                        selection_start: null,
+                        selection_end: null
+                    }
+                });
+                
+                // Then send save request
+                sendEditorMessage({
+                    type: 'save_request',
+                    session_id: editorState.sessionId
+                });
+                
+                updateAutoSaveStatus('saving');
+            } else {
+                console.error('Cannot save: not connected to server');
+                alert('Cannot save: not connected to server');
+            }
+        }
+
+        // Set dirty state
+        function setDirty(dirty) {
+            editorState.isDirty = dirty;
+            const indicator = document.getElementById('dirty-indicator');
+            if (indicator) {
+                indicator.style.display = dirty ? 'inline' : 'none';
+            }
+
+            if (dirty && editorState.autoSaveEnabled) {
+                startAutoSaveTimer();
+            } else if (!dirty) {
+                clearAutoSaveTimer();
+            }
+        }
+
+        // Auto-save timer
+        function startAutoSaveTimer() {
+            clearAutoSaveTimer();
+            updateAutoSaveStatus('pending');
+            
+            editorState.autoSaveTimer = setTimeout(() => {
+                if (editorState.isDirty && editorState.autoSaveEnabled) {
+                    updateAutoSaveStatus('saving');
+                    saveContent();
+                }
+            }, 2000); // 2-second delay as per requirements
+        }
+
+        function clearAutoSaveTimer() {
+            if (editorState.autoSaveTimer) {
+                clearTimeout(editorState.autoSaveTimer);
+                editorState.autoSaveTimer = null;
+            }
+        }
+
+        function updateAutoSaveStatus(status) {
+            const statusElement = document.getElementById('auto-save-status');
+            if (!statusElement) return;
+            
+            statusElement.className = 'status-item auto-save-status';
+            
+            switch (status) {
+                case 'pending':
+                    statusElement.textContent = 'Auto-save in 2s...';
+                    break;
+                case 'saving':
+                    statusElement.textContent = 'Saving...';
+                    statusElement.classList.add('saving');
+                    break;
+                case 'saved':
+                    statusElement.textContent = 'Saved';
+                    statusElement.classList.add('saved');
+                    setTimeout(() => {
+                        statusElement.textContent = 'Auto-save enabled';
+                        statusElement.className = 'status-item auto-save-status';
+                    }, 2000);
+                    break;
+                case 'idle':
+                default:
+                    statusElement.textContent = editorState.autoSaveEnabled ? 'Auto-save enabled' : 'Auto-save disabled';
+                    break;
+            }
+        }
+
+        // Update editor statistics
+        function updateEditorStats() {
+            let text = '';
+            
+            if (editorState.mode === 'raw') {
+                const textarea = document.getElementById('raw-textarea');
+                text = textarea.value;
+                
+                // Update cursor position
+                const cursorPos = textarea.selectionStart;
+                const textBeforeCursor = text.substring(0, cursorPos);
+                const lines = textBeforeCursor.split('\n');
+                const line = lines.length;
+                const column = lines[lines.length - 1].length + 1;
+                
+                editorState.cursorPosition = { line, column, absolute: cursorPos };
+            } else if (editorState.mode === 'live') {
+                const liveContent = document.getElementById('live-content');
+                if (liveContent) {
+                    text = editorState.content || liveContent.textContent || '';
+                }
+            }
+
+            // Update word and character count
+            const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+            const chars = text.length;
+            
+            const wordCountEl = document.getElementById('word-count');
+            const charCountEl = document.getElementById('char-count');
+            const cursorPosEl = document.getElementById('cursor-position');
+            
+            if (wordCountEl) wordCountEl.textContent = `${words} words`;
+            if (charCountEl) charCountEl.textContent = `${chars} chars`;
+            if (cursorPosEl && editorState.mode === 'raw') {
+                cursorPosEl.textContent = `Line ${editorState.cursorPosition.line}, Col ${editorState.cursorPosition.column}`;
+            } else if (cursorPosEl) {
+                cursorPosEl.textContent = 'Live Mode';
+            }
+        }
+
+        // Update status bar
+        function updateStatusBar() {
+            const currentModeEl = document.getElementById('current-mode');
+            if (currentModeEl) {
+                const modeNames = {
+                    'preview': 'Preview Mode',
+                    'raw': 'Raw Mode',
+                    'live': 'Live Mode'
+                };
+                currentModeEl.textContent = modeNames[editorState.mode] || 'Preview Mode';
+            }
+        }
+
+        // Toggle shortcuts help
+        function toggleShortcutsHelp() {
+            const overlay = document.getElementById('shortcuts-overlay');
+            if (overlay) {
+                overlay.classList.toggle('show');
+            }
+        }
+
+        // Send editor message via WebSocket
+        function sendEditorMessage(message) {
+            if (window.editorWebSocket && window.editorWebSocket.readyState === WebSocket.OPEN) {
+                window.editorWebSocket.send(JSON.stringify(message));
+            }
+        }
+
+        // Handle editor WebSocket messages
+        function handleEditorMessage(message) {
+            switch (message.type) {
+                case 'save_complete':
+                    setDirty(false);
+                    updateAutoSaveStatus('saved');
+                    if (message.timestamp) {
+                        editorState.lastSaveTime = new Date(message.timestamp);
+                    }
+                    editorState.originalContent = editorState.content;
+                    console.log('✅ Content saved successfully');
+                    break;
+                    
+                case 'live_content_update':
+                case 'markdown_rendered':
+                    console.log('Received markdown_rendered message, mode:', editorState.mode);
+                    if (editorState.mode === 'live') {
+                        const liveContent = document.getElementById('live-content');
+                        const html = message.rendered_content || message.html;
+                        
+                        console.log('Live content element:', liveContent ? 'found' : 'not found');
+                        console.log('HTML length:', html ? html.length : 0);
+                        
+                        if (liveContent && html) {
+                            // If we're editing a specific element, only update that element
+                            if (message.element_id && liveEditingElement) {
+                                liveEditingElement.innerHTML = html;
+                                liveEditingElement.contentEditable = 'false';
+                                liveEditingElement.classList.remove('editing', 'active-edit');
+                                console.log('📝 Updated single element');
+                            } else {
+                                // Full content update
+                                liveContent.innerHTML = html;
+                                
+                                // Parse and store markdown for each element
+                                parseAndStoreMarkdown(liveContent);
+                                console.log('📝 Updated full live content');
+                            }
+                        } else {
+                            console.warn('Cannot update live content:', {
+                                hasElement: !!liveContent,
+                                hasHtml: !!html
+                            });
+                        }
+                    }
+                    break;
+                    
+                case 'welcome':
+                    // Connection established - update session ID if provided by server
+                    if (message.session_id) {
+                        editorState.sessionId = message.session_id;
+                        console.log('Server provided session ID:', editorState.sessionId);
+                    }
+                    console.log('📡 Editor WebSocket ready');
+                    break;
+                    
+                case 'error':
+                    console.error('❌ Editor error:', message.message);
+                    break;
+                    
+                default:
+                    console.log('📨 Received editor message:', message.type);
+            }
+        }
+
+        // Update connection status
+        function updateConnectionStatus(connected) {
+            editorState.isConnected = connected;
+            const statusEl = document.getElementById('connection-status');
+            if (statusEl) {
+                if (connected) {
+                    statusEl.classList.remove('disconnected');
+                    statusEl.title = 'Connected';
+                } else {
+                    statusEl.classList.add('disconnected');
+                    statusEl.title = 'Disconnected';
+                }
+            }
+        }
+
+        // Setup editor WebSocket connection
+        function setupEditorWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/editor`;
+            
+            window.editorWebSocket = new WebSocket(wsUrl);
+            
+            window.editorWebSocket.onopen = function() {
+                console.log('Editor WebSocket connected');
+                // Set connected state immediately
+                editorState.isConnected = true;
+                // Generate session ID if not already set
+                if (!editorState.sessionId) {
+                    editorState.sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                }
+                updateConnectionStatus(true);
+                console.log('Editor session ID:', editorState.sessionId);
+            };
+            
+            window.editorWebSocket.onmessage = function(event) {
+                try {
+                    const message = JSON.parse(event.data);
+                    handleEditorMessage(message);
+                } catch (e) {
+                    console.error('Failed to parse editor message:', e);
+                }
+            };
+            
+            window.editorWebSocket.onerror = function(event) {
+                console.error('Editor WebSocket error:', event);
+                editorState.isConnected = false;
+                updateConnectionStatus(false);
+            };
+            
+            window.editorWebSocket.onclose = function() {
+                console.log('Editor WebSocket closed, attempting to reconnect...');
+                editorState.isConnected = false;
+                updateConnectionStatus(false);
+                setTimeout(setupEditorWebSocket, 3000);
+            };
+        }
+
+        // Setup editor event listeners
+        function setupEditorEventListeners() {
+            // Raw editor events
+            const rawTextarea = document.getElementById('raw-textarea');
+            if (rawTextarea) {
+                rawTextarea.addEventListener('input', () => {
+                    setDirty(true);
+                    updateEditorStats();
+                });
+                
+                rawTextarea.addEventListener('click', updateEditorStats);
+                rawTextarea.addEventListener('keyup', updateEditorStats);
+                
+                // Handle Tab key
+                rawTextarea.addEventListener('keydown', (e) => {
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const start = rawTextarea.selectionStart;
+                        const end = rawTextarea.selectionEnd;
+                        rawTextarea.value = rawTextarea.value.substring(0, start) + '\t' + rawTextarea.value.substring(end);
+                        rawTextarea.selectionStart = rawTextarea.selectionEnd = start + 1;
+                        setDirty(true);
+                        updateEditorStats();
+                    }
+                });
+            }
+
+            // Live editor events
+            const liveContent = document.getElementById('live-content');
+            if (liveContent) {
+                // Click to edit
+                liveContent.addEventListener('click', (e) => {
+                    if (editorState.mode !== 'live') return;
+                    
+                    const target = e.target;
+                    const editableElements = ['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'P', 'LI', 'BLOCKQUOTE'];
+                    
+                    if (editableElements.includes(target.tagName)) {
+                        makeElementEditable(target);
+                    }
+                });
+
+                // Handle blur - render the element
+                liveContent.addEventListener('blur', (e) => {
+                    if (liveEditingElement && e.target === liveEditingElement) {
+                        deactivateElement(liveEditingElement);
+                    }
+                }, true);
+
+                // Handle Enter key - finish editing current element
+                liveContent.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && liveEditingElement) {
+                        e.preventDefault();
+                        deactivateElement(liveEditingElement);
+                        
+                        // Create new paragraph after current element
+                        const newP = document.createElement('p');
+                        newP.textContent = '';
+                        liveEditingElement.parentNode.insertBefore(newP, liveEditingElement.nextSibling);
+                        
+                        // Make new paragraph editable
+                        setTimeout(() => makeElementEditable(newP), 10);
+                    }
+                });
+
+                // Handle input in editing element
+                liveContent.addEventListener('input', (e) => {
+                    if (liveEditingElement && e.target === liveEditingElement) {
+                        setDirty(true);
+                        updateEditorStats();
+                    }
+                });
+            }
+
+            // Global keyboard shortcuts
+            document.addEventListener('keydown', (e) => {
+                // Only handle shortcuts in editor mode
+                if (!document.body.classList.contains('editor-mode')) {
+                    return;
+                }
+                
+                const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+                const modifier = isMac ? e.metaKey : e.ctrlKey;
+                
+                if (modifier) {
+                    switch (e.key.toLowerCase()) {
+                        case 's':
+                            e.preventDefault();
+                            saveContent();
+                            break;
+                        case 'e':
+                            e.preventDefault();
+                            // Toggle between raw and live
+                            if (editorState.mode === 'raw') {
+                                switchEditorMode('live');
+                            } else if (editorState.mode === 'live') {
+                                switchEditorMode('raw');
+                            } else {
+                                switchEditorMode('raw');
+                            }
+                            break;
+                        case '/':
+                            e.preventDefault();
+                            switchEditorMode('preview');
+                            break;
+                        case 't':
+                            e.preventDefault();
+                            openThemeModal();
+                            break;
+                        case 'b':
+                            e.preventDefault();
+                            applyMarkdownFormat('bold');
+                            break;
+                        case 'i':
+                            e.preventDefault();
+                            applyMarkdownFormat('italic');
+                            break;
+                    }
+                } else if (e.key === 'Escape') {
+                    // Close shortcuts help if open
+                    const shortcutsOverlay = document.getElementById('shortcuts-overlay');
+                    if (shortcutsOverlay && shortcutsOverlay.classList.contains('show')) {
+                        shortcutsOverlay.classList.remove('show');
+                    } else {
+                        // Exit editor mode
+                        exitEditorMode();
+                    }
+                } else if (e.key === '?' && !e.shiftKey) {
+                    toggleShortcutsHelp();
+                }
+            });
+
+            // Browser warning for unsaved changes
+            window.addEventListener('beforeunload', (e) => {
+                if (editorState.isDirty && document.body.classList.contains('editor-mode')) {
+                    const message = 'You have unsaved changes. Are you sure you want to leave?';
+                    e.preventDefault();
+                    e.returnValue = message;
+                    return message;
+                }
+            });
+
+            // Close shortcuts overlay when clicking outside
+            const shortcutsOverlay = document.getElementById('shortcuts-overlay');
+            if (shortcutsOverlay) {
+                shortcutsOverlay.addEventListener('click', (e) => {
+                    if (e.target === shortcutsOverlay) {
+                        shortcutsOverlay.classList.remove('show');
+                    }
+                });
+            }
+        }
+
+        // Apply markdown formatting
+        function applyMarkdownFormat(format) {
+            if (editorState.mode !== 'raw') return;
+            
+            const textarea = document.getElementById('raw-textarea');
+            if (!textarea) return;
+            
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const selectedText = textarea.value.substring(start, end);
+            
+            if (!selectedText) return;
+            
+            let formattedText = '';
+            switch (format) {
+                case 'bold':
+                    formattedText = `**${selectedText}**`;
+                    break;
+                case 'italic':
+                    formattedText = `*${selectedText}*`;
+                    break;
+                case 'code':
+                    formattedText = `\`${selectedText}\``;
+                    break;
+            }
+            
+            textarea.value = textarea.value.substring(0, start) + formattedText + textarea.value.substring(end);
+            textarea.selectionStart = start;
+            textarea.selectionEnd = start + formattedText.length;
+            textarea.focus();
+            
+            setDirty(true);
+            updateEditorStats();
+        }
 
         // Theme management
         function initTheme() {
@@ -761,6 +2031,11 @@
             initTheme();
             initMermaid();
             setupLiveReload();
+            
+            // Initialize editor functionality
+            initEditorState();
+            setupEditorEventListeners();
+            setupEditorWebSocket();
 
             // Modal close functionality
             const modal = document.getElementById('themeModal');
@@ -772,7 +2047,7 @@
                 }
             });
 
-            // Close modal with ESC key
+            // Close modal with ESC key (only for theme modal, not editor)
             document.addEventListener('keydown', function(e) {
                 if (e.key === 'Escape' && modal.classList.contains('show')) {
                     closeThemeModal();
@@ -782,9 +2057,109 @@
     </script>
 </head>
 <body>
-<button class="theme-toggle" onclick="openThemeModal()">🎨</button>
-<div id="content">
+<!-- Editor Toolbar -->
+<div class="editor-toolbar">
+    <div class="editor-toolbar-left">
+        <div class="editor-mode-toggle">
+            <button class="mode-btn" id="preview-mode-btn" onclick="switchEditorMode('preview')">Preview</button>
+            <button class="mode-btn" id="raw-mode-btn" onclick="switchEditorMode('raw')">Raw</button>
+            <button class="mode-btn" id="live-mode-btn" onclick="switchEditorMode('live')">Live</button>
+        </div>
+    </div>
+    <div class="editor-toolbar-right">
+        <button class="theme-toggle" onclick="openThemeModal()" style="position: static;">🎨</button>
+        <button class="editor-btn secondary" onclick="toggleShortcutsHelp()">?</button>
+        <button class="editor-btn" id="save-btn" onclick="saveContent()">
+            <span>💾 Save</span>
+        </button>
+        <button class="editor-btn secondary" onclick="exitEditorMode()">Exit Editor</button>
+    </div>
+</div>
+
+<!-- Editor Container -->
+<div class="editor-container">
+    <!-- Raw Editor Mode -->
+    <div class="raw-editor" id="raw-editor">
+        <textarea class="raw-textarea" id="raw-textarea" spellcheck="false"></textarea>
+    </div>
+
+    <!-- Live WYSIWYG Editor Mode -->
+    <div class="live-editor" id="live-editor">
+        <div class="live-content" id="live-content"></div>
+    </div>
+
+    <!-- Preview Mode -->
+    <div class="preview-mode active" id="preview-mode">
+        <div id="content">
 {CONTENT}
+        </div>
+    </div>
+</div>
+
+<!-- Status Bar -->
+<div class="editor-status-bar">
+    <div class="status-left">
+        <span id="cursor-position" class="status-item">Line 1, Col 1</span>
+        <span id="word-count" class="status-item">0 words</span>
+        <span id="char-count" class="status-item">0 chars</span>
+        <span id="dirty-indicator" class="status-item dirty-indicator" style="display: none;">● Unsaved</span>
+    </div>
+    <div class="status-right">
+        <span id="auto-save-status" class="status-item auto-save-status">Auto-save enabled</span>
+        <span class="connection-status" id="connection-status" title="Connected"></span>
+        <span id="current-mode" class="status-item">Preview Mode</span>
+    </div>
+</div>
+
+<!-- Preview Mode (non-editor) -->
+<button class="theme-toggle" id="preview-theme-toggle" onclick="openThemeModal()">🎨</button>
+<button class="editor-toggle-btn" id="editor-toggle-btn" onclick="enterEditorMode()" style="position: fixed; bottom: 20px; right: 20px; background: var(--link-color); color: var(--bg-color); border: none; padding: 12px 20px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); transition: all 0.2s ease; z-index: 100;">
+    ✏️ Edit
+</button>
+
+<!-- Keyboard Shortcuts Help -->
+<div class="shortcuts-overlay" id="shortcuts-overlay">
+    <div class="shortcuts-content">
+        <h4>Keyboard Shortcuts</h4>
+        <div class="shortcuts-list">
+            <div class="shortcut-item">
+                <kbd>Ctrl+S</kbd>
+                <span>Save</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>Ctrl+E</kbd>
+                <span>Toggle Raw/Live Mode</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>Ctrl+/</kbd>
+                <span>Toggle Preview</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>Ctrl+B</kbd>
+                <span>Bold</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>Ctrl+I</kbd>
+                <span>Italic</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>Ctrl+T</kbd>
+                <span>Change Theme</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>Tab</kbd>
+                <span>Indent</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>Esc</kbd>
+                <span>Exit Editor / Close Dialog</span>
+            </div>
+            <div class="shortcut-item">
+                <kbd>?</kbd>
+                <span>Show/Hide Shortcuts</span>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="theme-modal" id="themeModal">
@@ -848,5 +2223,8 @@
         </div>
     </div>
 </div>
+
+<!-- Editor JavaScript Module -->
+<script src="/editor/editor.js"></script>
 </body>
 </html>
