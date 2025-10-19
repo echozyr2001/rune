@@ -973,10 +973,23 @@ impl Plugin for ServerPlugin {
     async fn initialize(&mut self, context: &PluginContext) -> Result<()> {
         info!("Initializing server plugin");
 
-        // Load configuration from plugin context
-        if let Ok(Some(config)) = context.get_config_value::<ServerConfig>("server").await {
-            self.config = config;
+        // Load configuration from global config (not plugin namespace)
+        self.config.hostname = context.config.server.hostname.clone();
+        self.config.port = context.config.server.port;
+
+        // Load additional server config from plugin context if available
+        if let Ok(Some(plugin_config)) = context.get_config_value::<ServerConfig>("server").await {
+            // Only override non-critical settings from plugin config
+            self.config.enable_cors = plugin_config.enable_cors;
+            self.config.max_connections = plugin_config.max_connections;
+            self.config.request_timeout_secs = plugin_config.request_timeout_secs;
+            self.config.websocket_ping_interval_secs = plugin_config.websocket_ping_interval_secs;
         }
+
+        info!(
+            "Server plugin configured: {}:{}",
+            self.config.hostname, self.config.port
+        );
 
         // Create handler registry
         let registry = Arc::new(HandlerRegistry::new(context.event_bus.clone()));
