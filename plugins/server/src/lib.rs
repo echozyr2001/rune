@@ -1377,6 +1377,13 @@ impl ServerEventHandler {
             .await?;
         info!("Registered markdown render API handler at /api/render-markdown");
 
+        // Register favicon handler to prevent 404 warnings
+        let favicon_handler = Arc::new(handlers::FaviconHandler::new());
+        self.handler_registry
+            .register_http_handler(favicon_handler)
+            .await?;
+        info!("Registered favicon handler");
+
         // Register static file handler for assets in the same directory
         if let Some(base_dir) = file_path.parent() {
             let static_handler = Arc::new(handlers::StaticHandler::new(
