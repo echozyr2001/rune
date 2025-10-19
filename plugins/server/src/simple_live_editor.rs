@@ -7,15 +7,95 @@
 
 use crate::{HttpHandler, HttpRequest, HttpResponse};
 use async_trait::async_trait;
-use axum::http::Method;
-use rune_core::Result;
+use axum::http::{Method, StatusCode};
+use rune_core::{quill::Quill, Result};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
 /// 简化的 Live Editor 处理器
+#[derive(Debug, Deserialize)]
+struct MarkdownRequest {
+    markdown: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MarkdownResponse {
+    html: String,
+    success: bool,
+    error: Option<String>,
+}
+
+pub struct MarkdownRenderHandler {
+    quill: Quill,
+}
+
+impl Default for MarkdownRenderHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MarkdownRenderHandler {
+    pub fn new() -> Self {
+        Self {
+            quill: Quill::new(),
+        }
+    }
+}
+
+#[async_trait]
+impl HttpHandler for MarkdownRenderHandler {
+    async fn handle(&self, request: HttpRequest) -> Result<HttpResponse> {
+        if request.method != Method::POST {
+            return Ok(HttpResponse::error(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "Only POST method is allowed",
+            ));
+        }
+
+        // Parse the JSON request body
+        let markdown_request: MarkdownRequest = match serde_json::from_slice(&request.body) {
+            Ok(req) => req,
+            Err(e) => {
+                let error_response = MarkdownResponse {
+                    html: String::new(),
+                    success: false,
+                    error: Some(format!("Invalid JSON: {}", e)),
+                };
+                return HttpResponse::json(&error_response);
+            }
+        };
+
+        // Render markdown to HTML using Quill
+        let html = self.quill.markdown_to_html(&markdown_request.markdown);
+
+        let response = MarkdownResponse {
+            html,
+            success: true,
+            error: None,
+        };
+
+        Ok(HttpResponse::json(&response)?)
+    }
+
+    fn path_pattern(&self) -> &str {
+        "/api/render-markdown"
+    }
+
+    fn method(&self) -> Method {
+        Method::POST
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 pub struct SimpleLiveEditorHandler {
     path_pattern: String,
     markdown_file: PathBuf,
+    quill: Quill,
 }
 
 impl SimpleLiveEditorHandler {
@@ -23,7 +103,13 @@ impl SimpleLiveEditorHandler {
         Self {
             path_pattern,
             markdown_file,
+            quill: Quill::new(),
         }
+    }
+
+    /// 使用Quill引擎渲染markdown为HTML
+    fn render_markdown(&self, markdown: &str) -> String {
+        self.quill.markdown_to_html(markdown)
     }
 
     /// 生成简化的 Live Editor 界面
@@ -351,8 +437,41 @@ impl SimpleLiveEditorHandler {
             updateStatus();
         }}
         
-        // Simple markdown to HTML converter for preview
-        function updatePreview(markdown) {{
+        // 使用服务端Quill引擎渲染markdown 
+        async function updatePreview(markdown) {{
+            try {{
+                const response = await fetch('/api/render-markdown', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                    }},
+                    body: JSON.stringify({{ 
+                        markdown: markdown
+                    }})
+                }});
+                
+                if (response.ok) {{
+                    const result = await response.json();
+                    if (result.success) {{
+                        previewPanel.innerHTML = result.html;
+                    }} else {{
+                        console.error('API returned error:', result.error);
+                        fallbackRender(markdown);
+                    }}
+                }} else {{
+                    console.error('Failed to render markdown:', response.statusText);
+                    // 回退到简单渲染
+                    fallbackRender(markdown);
+                }}
+            }} catch (error) {{
+                console.error('Error rendering markdown:', error);
+                // 回退到简单渲染
+                fallbackRender(markdown);
+            }}
+        }}
+        
+        // 简单的回退渲染（保留原有逻辑作为备份）
+        function fallbackRender(markdown) {{
             let html = markdown;
             
             // Headers

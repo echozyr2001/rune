@@ -187,6 +187,45 @@ impl HttpHandler for StaticHandler {
     }
 }
 
+/// Simple favicon handler to prevent 404 warnings
+pub struct FaviconHandler;
+
+impl Default for FaviconHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FaviconHandler {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl HttpHandler for FaviconHandler {
+    async fn handle(&self, _request: HttpRequest) -> Result<HttpResponse> {
+        // Return a simple empty favicon response to prevent browser warnings
+        Ok(HttpResponse::new(StatusCode::NO_CONTENT))
+    }
+
+    fn path_pattern(&self) -> &str {
+        "/favicon.ico"
+    }
+
+    fn method(&self) -> Method {
+        Method::GET
+    }
+
+    fn priority(&self) -> i32 {
+        50 // Higher priority than static handlers
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// Markdown handler for serving rendered markdown content with live reload
 pub struct MarkdownHandler {
     path_pattern: String,
@@ -1169,10 +1208,18 @@ impl LiveReloadHandler {
     /// Broadcast a reload message to all connected clients
     pub async fn broadcast_reload(&self) -> Result<()> {
         if let Some(sender) = self.get_reload_sender().await {
-            sender
-                .send(ServerMessage::Reload)
-                .map_err(|e| RuneError::Server(format!("Failed to broadcast reload: {}", e)))?;
-            info!("Broadcasted reload message to WebSocket clients");
+            // Check if there are any receivers before sending
+            if sender.receiver_count() > 0 {
+                sender
+                    .send(ServerMessage::Reload)
+                    .map_err(|e| RuneError::Server(format!("Failed to broadcast reload: {}", e)))?;
+                info!(
+                    "Broadcasted reload message to {} WebSocket clients",
+                    sender.receiver_count()
+                );
+            } else {
+                debug!("No WebSocket clients connected, skipping reload broadcast");
+            }
         }
         Ok(())
     }
@@ -1185,15 +1232,23 @@ impl LiveReloadHandler {
         metadata: Option<ContentMetadata>,
     ) -> Result<()> {
         if let Some(sender) = self.get_reload_sender().await {
-            let message = ServerMessage::ContentUpdate {
-                html,
-                css,
-                metadata,
-            };
-            sender.send(message).map_err(|e| {
-                RuneError::Server(format!("Failed to broadcast content update: {}", e))
-            })?;
-            info!("Broadcasted content update to WebSocket clients");
+            // Check if there are any receivers before sending
+            if sender.receiver_count() > 0 {
+                let message = ServerMessage::ContentUpdate {
+                    html,
+                    css,
+                    metadata,
+                };
+                sender.send(message).map_err(|e| {
+                    RuneError::Server(format!("Failed to broadcast content update: {}", e))
+                })?;
+                info!(
+                    "Broadcasted content update to {} WebSocket clients",
+                    sender.receiver_count()
+                );
+            } else {
+                debug!("No WebSocket clients connected, skipping content update broadcast");
+            }
         }
         Ok(())
     }
@@ -1201,15 +1256,21 @@ impl LiveReloadHandler {
     /// Broadcast incremental updates to specific elements
     pub async fn broadcast_incremental_update(&self, updates: Vec<ElementUpdate>) -> Result<()> {
         if let Some(sender) = self.get_reload_sender().await {
-            let update_count = updates.len();
-            let message = ServerMessage::IncrementalUpdate { updates };
-            sender.send(message).map_err(|e| {
-                RuneError::Server(format!("Failed to broadcast incremental update: {}", e))
-            })?;
-            info!(
-                "Broadcasted incremental update to WebSocket clients ({} updates)",
-                update_count
-            );
+            // Check if there are any receivers before sending
+            if sender.receiver_count() > 0 {
+                let update_count = updates.len();
+                let message = ServerMessage::IncrementalUpdate { updates };
+                sender.send(message).map_err(|e| {
+                    RuneError::Server(format!("Failed to broadcast incremental update: {}", e))
+                })?;
+                info!(
+                    "Broadcasted incremental update to {} WebSocket clients ({} updates)",
+                    sender.receiver_count(),
+                    update_count
+                );
+            } else {
+                debug!("No WebSocket clients connected, skipping incremental update broadcast");
+            }
         }
         Ok(())
     }
@@ -1217,11 +1278,19 @@ impl LiveReloadHandler {
     /// Broadcast error message to all connected clients
     pub async fn broadcast_error(&self, message: String, code: Option<String>) -> Result<()> {
         if let Some(sender) = self.get_reload_sender().await {
-            let error_message = ServerMessage::Error { message, code };
-            sender
-                .send(error_message)
-                .map_err(|e| RuneError::Server(format!("Failed to broadcast error: {}", e)))?;
-            warn!("Broadcasted error message to WebSocket clients");
+            // Check if there are any receivers before sending
+            if sender.receiver_count() > 0 {
+                let error_message = ServerMessage::Error { message, code };
+                sender
+                    .send(error_message)
+                    .map_err(|e| RuneError::Server(format!("Failed to broadcast error: {}", e)))?;
+                warn!(
+                    "Broadcasted error message to {} WebSocket clients",
+                    sender.receiver_count()
+                );
+            } else {
+                debug!("No WebSocket clients connected, skipping error broadcast");
+            }
         }
         Ok(())
     }
