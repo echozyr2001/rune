@@ -3,11 +3,15 @@
 //! This crate provides the core interfaces, event system, and plugin architecture
 //! that powers the modular Rune markdown editor.
 
+pub mod ast;
 pub mod config;
 pub mod error;
 pub mod event;
 pub mod file_watcher;
+pub mod parser;
 pub mod plugin;
+pub mod quill;
+pub mod render;
 pub mod renderer;
 pub mod state;
 
@@ -21,6 +25,7 @@ mod plugin_test;
 mod plugin_context_test;
 
 // Re-export commonly used types
+pub use ast::{Node, NodeType, ParseOptions, Position, Tree, WalkStatus};
 pub use config::{
     Config, ConfigLoadContext, ConfigMetadata, PluginConfig, RuntimeConfigManager, ServerConfig,
     SystemConfig, ValidationResult,
@@ -31,7 +36,10 @@ pub use event::{
     SystemEvent, SystemEventHandler,
 };
 pub use file_watcher::{DefaultFileFilter, FileFilter, FileWatcher, FileWatcherConfig, WatcherId};
+pub use parser::MarkdownParser;
 pub use plugin::{Plugin, PluginContext, PluginInfo, PluginRegistry, PluginStatus};
+pub use quill::Quill;
+pub use render::{render_html, render_wysiwyg, HtmlRenderer, RenderOptions, WysiwygRenderer};
 pub use renderer::{
     Asset, AssetType, ContentRenderer, RenderContext, RenderMetadata, RenderResult,
     RendererRegistry,
