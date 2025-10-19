@@ -262,10 +262,10 @@ impl Tree {
     where
         F: FnMut(&Node, bool) -> WalkStatus,
     {
-        self.walk_node(&self.root, &mut visitor);
+        Tree::walk_node(&self.root, &mut visitor);
     }
 
-    fn walk_node<F>(&self, node: &Node, visitor: &mut F)
+    fn walk_node<F>(node: &Node, visitor: &mut F)
     where
         F: FnMut(&Node, bool) -> WalkStatus,
     {
@@ -278,7 +278,7 @@ impl Tree {
 
         // Visit children
         for child in &node.children {
-            self.walk_node(child, visitor);
+            Tree::walk_node(child, visitor);
         }
 
         // Visit node exiting

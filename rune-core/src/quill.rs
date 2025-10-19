@@ -11,6 +11,7 @@ use regex::Regex;
 ///
 /// The Quill converts markdown text into various output formats
 /// with support for both standard HTML and WYSIWYG editing.
+#[allow(dead_code)]
 pub struct Quill {
     parse_options: crate::ast::ParseOptions,
     render_options: RenderOptions,
@@ -220,6 +221,8 @@ impl Quill {
     /// Convert list items from HTML to Markdown
     fn convert_list_items(&self, html: &str, prefix: &str) -> String {
         let re = Regex::new(r#"<li[^>]*>(.*?)</li>"#).unwrap();
+        let checkbox_re =
+            Regex::new(r#"<input[^>]*type="checkbox"[^>]*(?:checked[^>]*)?/?>\s*"#).unwrap();
         let mut result = String::new();
 
         for caps in re.captures_iter(html) {
@@ -227,9 +230,6 @@ impl Quill {
 
             // Check for task list items
             if content.contains(r#"type="checkbox""#) {
-                let checkbox_re =
-                    Regex::new(r#"<input[^>]*type="checkbox"[^>]*(?:checked[^>]*)?/?>\s*"#)
-                        .unwrap();
                 let is_checked = content.contains("checked");
 
                 let clean_content = checkbox_re.replace(content, "").to_string();

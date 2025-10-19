@@ -197,6 +197,9 @@ impl MarkdownParser {
             list.set_attribute("type", "ordered");
         }
 
+        // Compile ordered list regex once per parse_list call to avoid creating it inside the loop
+        let ordered_re = Regex::new(r"^\s*\d+\.\s").unwrap();
+
         let mut line_index = start_index;
 
         while line_index < lines.len() {
@@ -220,10 +223,10 @@ impl MarkdownParser {
                     .unwrap()
                     .strip_prefix(" ")
                     .unwrap()
+                    .to_string()
             } else {
                 // Ordered list
-                let re = Regex::new(r"^\s*\d+\.\s").unwrap();
-                &re.replace(line, "")
+                ordered_re.replace(line, "").to_string()
             };
 
             // Check for task list item
@@ -240,7 +243,7 @@ impl MarkdownParser {
                 list_item.append_child(task_marker);
                 self.parse_inline_content(&mut list_item, content.strip_prefix("[x] ").unwrap());
             } else {
-                self.parse_inline_content(&mut list_item, content);
+                self.parse_inline_content(&mut list_item, &content);
             }
 
             list.append_child(list_item);

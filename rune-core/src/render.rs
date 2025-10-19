@@ -282,6 +282,7 @@ impl HtmlRenderer {
 }
 
 /// WYSIWYG renderer for creating editable DOM structures
+#[allow(dead_code)]
 pub struct WysiwygRenderer {
     options: RenderOptions,
     output: String,
