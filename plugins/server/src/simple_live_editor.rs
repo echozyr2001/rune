@@ -30,6 +30,12 @@ pub struct MarkdownRenderHandler {
     quill: Quill,
 }
 
+impl Default for MarkdownRenderHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MarkdownRenderHandler {
     pub fn new() -> Self {
         Self {
@@ -57,7 +63,7 @@ impl HttpHandler for MarkdownRenderHandler {
                     success: false,
                     error: Some(format!("Invalid JSON: {}", e)),
                 };
-                return Ok(HttpResponse::json(&error_response)?);
+                return HttpResponse::json(&error_response);
             }
         };
 

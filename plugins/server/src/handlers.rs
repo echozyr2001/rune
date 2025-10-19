@@ -190,6 +190,12 @@ impl HttpHandler for StaticHandler {
 /// Simple favicon handler to prevent 404 warnings
 pub struct FaviconHandler;
 
+impl Default for FaviconHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FaviconHandler {
     pub fn new() -> Self {
         Self

@@ -54,7 +54,7 @@ impl Quill {
     /// This is the core function that transforms DOM structures through markdown
     pub fn spin_wysiwyg_dom(&self, html: &str) -> String {
         // Step 1: Convert HTML to Markdown
-        let markdown = self.html_to_markdown(&html);
+        let markdown = self.html_to_markdown(html);
 
         // Step 2: Parse Markdown to AST
         let parser = MarkdownParser::with_options(self.parse_options.clone());
